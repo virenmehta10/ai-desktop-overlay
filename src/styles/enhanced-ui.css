@@ -1,0 +1,986 @@
+/* Enhanced Glass Effect */
+.glass-dark {
+  background: rgba(17, 17, 17, 0.75);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none !important;
+}
+
+/* Enhanced Input Field */
+.glass-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 
+    0 2px 8px -2px rgba(0, 0, 0, 0.2),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-input:focus {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 
+    0 2px 8px -2px rgba(0, 0, 0, 0.2),
+    0 0 0 3px rgba(59, 130, 246, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Enhanced Quick Prompt Buttons */
+.quick-prompt-button {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 
+    0 2px 8px -2px rgba(0, 0, 0, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quick-prompt-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 16px -4px rgba(0, 0, 0, 0.2),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Enhanced Category Buttons */
+.category-button {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.category-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.category-button.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: rgba(59, 130, 246, 0.9);
+  box-shadow: 
+    0 0 0 1px rgba(59, 130, 246, 0.2),
+    0 2px 8px -2px rgba(59, 130, 246, 0.2);
+}
+
+/* Enhanced Status Dots */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.status-dot.thinking {
+  background: #EAB308;
+  box-shadow: 0 0 12px rgba(234, 179, 8, 0.4);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.status-dot.ready {
+  background: #10B981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+.status-dot.error {
+  background: #EF4444;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+/* Enhanced Response Card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 
+    0 4px 24px -4px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: 
+    0 8px 32px -4px rgba(0, 0, 0, 0.2),
+    0 4px 16px -4px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Enhanced Animations */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+}
+
+/* Enhanced Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Enhanced Typography */
+.prose-invert {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.prose-invert h1,
+.prose-invert h2,
+.prose-invert h3,
+.prose-invert h4 {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.prose-invert code {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.prose-invert pre {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Add these styles for math expressions */
+.katex-display {
+  @apply my-4 overflow-x-auto;
+  max-width: 100%;
+}
+
+.katex {
+  @apply text-white/90;
+  font-size: 1.1em;
+}
+
+.katex-html {
+  @apply overflow-x-auto;
+}
+
+/* Ensure inline math aligns properly with text */
+.katex-inline {
+  @apply inline-block align-middle;
+}
+
+/* Enhanced KaTeX Math Styling */
+.katex {
+  font-size: 0.95em !important;
+  color: #000000 !important; /* Changed from white to black */
+  text-rendering: auto;
+  line-height: 1.2 !important;
+}
+
+/* Math styling for sidebar assistant - ChatGPT style */
+.ai-response-text .katex {
+  color: #000000 !important; /* Black text for visibility */
+  font-size: 1em !important;
+  font-family: 'KaTeX_Main', 'Times New Roman', serif !important;
+}
+
+/* Force ALL math text to be black - override any white text */
+.ai-response-text .katex * {
+  color: #000000 !important;
+}
+
+.ai-response-text .katex .mord,
+.ai-response-text .katex .mbin,
+.ai-response-text .katex .mrel,
+.ai-response-text .katex .mopen,
+.ai-response-text .katex .mclose,
+.ai-response-text .katex .mpunct,
+.ai-response-text .katex .minner,
+.ai-response-text .katex .mop,
+.ai-response-text .katex .mspace,
+.ai-response-text .katex .mfrac,
+.ai-response-text .katex .msupsub,
+.ai-response-text .katex .mroot,
+.ai-response-text .katex .mtext {
+  color: #000000 !important;
+}
+
+.ai-response-text .katex-display {
+  margin: 0.5em 0 !important;
+  text-align: left !important;
+  background: transparent !important;
+  padding: 0.25em 0 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  overflow-x: auto !important;
+}
+
+.ai-response-text .katex-inline {
+  background: #f1f5f9 !important;
+  padding: 0.2em 0.4em !important;
+  border-radius: 0.25rem !important;
+  margin: 0 0.1em !important;
+  display: inline-block !important;
+  vertical-align: middle !important;
+}
+
+/* Active Learning Mode section heading size (slightly smaller) */
+.ai-response-text h3 {
+  font-size: 0.9rem !important; /* one step smaller than body */
+  line-height: 1.2 !important;
+  margin: 0.4rem 0 0.3rem 0 !important;
+  font-weight: 700 !important;
+}
+
+/* Ensure math renders properly */
+.katex-display {
+  display: block !important;
+  margin: 1em 0 !important;
+  text-align: center !important;
+}
+
+.katex {
+  font-size: 1.1em !important;
+  line-height: 1.2 !important;
+}
+
+/* Fix KaTeX error styling */
+.katex .mord, .katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose, .katex .mpunct, .katex .minner, .katex .mop {
+  color: #1f2937 !important;
+}
+
+/* Remove any red error text */
+.katex-error {
+  color: #1f2937 !important;
+  background: #fef2f2 !important;
+  border: 1px solid #fecaca !important;
+  padding: 0.5em !important;
+  border-radius: 0.25rem !important;
+}
+
+/* Ensure all math text is black, not white or red */
+.katex * {
+  color: #000000 !important;
+}
+
+/* Fix any red text in math */
+.katex .mord, .katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose, .katex .mpunct, .katex .minner, .katex .mop, .katex .mspace, .katex .mfrac, .katex .msupsub, .katex .mroot, .katex .mtext, .katex .mord, .katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose, .katex .mpunct, .katex .minner, .katex .mop {
+  color: #000000 !important;
+}
+
+/* Override any error colors */
+.katex .katex-error {
+  color: #000000 !important;
+  background: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+/* Force all math elements to be black */
+.katex .mord, .katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose, .katex .mpunct, .katex .minner, .katex .mop, .katex .mspace, .katex .mfrac, .katex .msupsub, .katex .mroot, .katex .mtext {
+  color: #000000 !important;
+}
+
+/* Ensure variables and powers are visible */
+.katex .mord {
+  color: #000000 !important;
+}
+
+/* Ensure differentials are visible */
+.katex .mtext {
+  color: #000000 !important;
+}
+
+/* AGGRESSIVE OVERRIDE - Force all math to be black */
+.ai-response-text .katex,
+.ai-response-text .katex *,
+.ai-response-text .katex .mord,
+.ai-response-text .katex .mbin,
+.ai-response-text .katex .mrel,
+.ai-response-text .katex .mopen,
+.ai-response-text .katex .mclose,
+.ai-response-text .katex .mpunct,
+.ai-response-text .katex .minner,
+.ai-response-text .katex .mop,
+.ai-response-text .katex .mspace,
+.ai-response-text .katex .mfrac,
+.ai-response-text .katex .msupsub,
+.ai-response-text .katex .mroot,
+.ai-response-text .katex .mtext,
+.ai-response-text .katex .mord,
+.ai-response-text .katex .mbin,
+.ai-response-text .katex .mrel,
+.ai-response-text .katex .mopen,
+.ai-response-text .katex .mclose,
+.ai-response-text .katex .mpunct,
+.ai-response-text .katex .minner,
+.ai-response-text .katex .mop {
+  color: #000000 !important;
+  fill: #000000 !important;
+  stroke: #000000 !important;
+}
+
+/* Override any inherited white text */
+.ai-response-text .katex {
+  color: #000000 !important;
+}
+
+.ai-response-text .katex * {
+  color: #000000 !important;
+}
+
+.katex-display {
+  display: block;
+  margin: 0.8em 0;
+  text-align: center;
+  overflow: visible;
+  padding: 0.3em 0;
+}
+
+.katex-display > .katex {
+  display: inline-block;
+  text-align: center;
+  max-width: 100%;
+}
+
+.katex-inline {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  padding: 0 0.1em;
+}
+
+/* Make math elements more visible on dark background */
+.katex .mord,
+.katex .mbin,
+.katex .mrel,
+.katex .mopen,
+.katex .mclose,
+.katex .mpunct,
+.katex .minner,
+.katex .mop {
+  color: #000000 !important; /* Changed from white to black */
+}
+
+.katex .frac-line,
+.katex .sqrt-line {
+  border-color: #000000 !important; /* Changed from white to black */
+}
+
+.katex .sqrt-sign {
+  color: #000000 !important; /* Changed from white to black */
+}
+
+/* Ensure proper spacing */
+.katex .mspace {
+  background-color: transparent !important;
+}
+
+/* Better fraction styling */
+.katex .mfrac {
+  margin: 0 0.2em;
+}
+
+.katex .mfrac .frac-line {
+  border-width: 1px;
+}
+
+/* Superscript and subscript positioning */
+.katex .msupsub {
+  text-align: left;
+} 
+
+/* Enhanced Markdown Rendering Styles */
+
+/* Improved Typography for AI Responses */
+.prose {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.6;
+  color: #1f2937;
+  font-size: 0.9rem;
+}
+
+/* Enhanced Headings */
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  color: #111827;
+  letter-spacing: -0.025em;
+}
+
+.prose h1 {
+  font-size: 1.875rem;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 0.5rem;
+}
+
+.prose h2 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid #f3f4f6;
+  padding-bottom: 0.375rem;
+}
+
+.prose h3 {
+  font-size: 1.25rem;
+  color: #374151;
+}
+
+.prose h4 {
+  font-size: 1.125rem;
+  color: #4b5563;
+}
+
+/* Enhanced Paragraphs */
+.prose p {
+  margin-bottom: 1.25rem;
+  line-height: 1.75;
+  color: #374151;
+  text-align: justify;
+  hyphens: auto;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+/* Enhanced Lists - NO SHADOWS */
+.prose ul, .prose ol {
+  margin: 1rem 0;
+  padding-left: 1rem;
+}
+
+.prose li {
+  margin: 0.3rem 0;
+  line-height: 1.5;
+  color: #374151;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  background: none !important;
+}
+
+.prose ul li {
+  position: relative;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  background: none !important;
+}
+
+.prose ul li::before {
+  content: "•";
+  color: #6366f1;
+  font-weight: bold;
+  position: absolute;
+  left: -0.8rem;
+  font-size: 1em;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  background: none !important;
+  filter: none !important;
+}
+
+.prose ol li::before {
+  color: #6366f1;
+  font-weight: 600;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  background: none !important;
+}
+
+/* Enhanced Blockquotes */
+.prose blockquote {
+  margin: 1.5rem 0;
+  padding: 1rem 1.5rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-left: 4px solid #6366f1;
+  border-radius: 0.5rem;
+  font-style: italic;
+  color: #475569;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.prose blockquote p {
+  margin: 0;
+  color: #475569;
+}
+
+/* Enhanced Code Blocks */
+.prose code {
+  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+  color: #1e293b;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.875em;
+  font-weight: 500;
+  border: 1px solid #cbd5e1;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Consolas', monospace;
+}
+
+.prose pre {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  color: #e2e8f0;
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+  border: 1px solid #334155;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  margin: 1.5rem 0;
+}
+
+.prose pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border: none;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* Enhanced Math Equations */
+.prose .math {
+  margin: 1.5rem 0;
+  text-align: center;
+  overflow-x: auto;
+}
+
+.prose .math-display {
+  display: block;
+  margin: 2rem auto;
+  padding: 1rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.prose .math-inline {
+  display: inline;
+  padding: 0.125rem 0.25rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.25rem;
+}
+
+/* Enhanced Tables */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.prose thead {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: white;
+}
+
+.prose th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.prose td {
+  padding: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  color: #374151;
+}
+
+.prose tbody tr:hover {
+  background: #f9fafb;
+}
+
+/* Enhanced Links */
+.prose a {
+  color: #6366f1;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.prose a:hover {
+  color: #4f46e5;
+  border-bottom-color: #4f46e5;
+}
+
+/* Enhanced Strong/Bold Text */
+.prose strong {
+  font-weight: 700;
+  color: #111827;
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+}
+
+/* Enhanced Emphasis */
+.prose em {
+  font-style: italic;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+/* Enhanced Horizontal Rules */
+.prose hr {
+  border: none;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #6366f1, transparent);
+  margin: 2rem 0;
+  border-radius: 1px;
+}
+
+/* Enhanced Images */
+.prose img {
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  margin: 1.5rem auto;
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Enhanced Definition Lists */
+.prose dl {
+  margin: 1.5rem 0;
+}
+
+.prose dt {
+  font-weight: 700;
+  color: #111827;
+  margin-top: 1rem;
+}
+
+.prose dd {
+  margin-left: 1rem;
+  margin-top: 0.5rem;
+  color: #4b5563;
+  padding-left: 1rem;
+  border-left: 2px solid #e5e7eb;
+}
+
+/* Enhanced Footnotes */
+.prose .footnotes {
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 2px solid #e5e7eb;
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+/* Enhanced Callouts */
+.prose .callout {
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  border-radius: 0.75rem;
+  border-left: 4px solid;
+  background: #f8fafc;
+}
+
+.prose .callout-info {
+  border-left-color: #3b82f6;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.prose .callout-warning {
+  border-left-color: #f59e0b;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+}
+
+.prose .callout-error {
+  border-left-color: #ef4444;
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+}
+
+.prose .callout-success {
+  border-left-color: #10b981;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+}
+
+/* FINAL OVERRIDE - Ensure math is always black */
+.katex,
+.katex *,
+.katex .mord,
+.katex .mbin,
+.katex .mrel,
+.katex .mopen,
+.katex .mclose,
+.katex .mpunct,
+.katex .minner,
+.katex .mop,
+.katex .mspace,
+.katex .mfrac,
+.katex .msupsub,
+.katex .mroot,
+.katex .mtext {
+  color: #000000 !important;
+}
+
+/* Clean up math display - remove messy LaTeX commands */
+.katex .mord {
+  font-family: 'KaTeX_Main', 'Times New Roman', serif !important;
+  color: #000000 !important;
+}
+
+.katex .mbin {
+  color: #000000 !important;
+}
+
+.katex .mrel {
+  color: #000000 !important;
+}
+
+/* Ensure proper spacing and clean display */
+.katex .mspace {
+  color: transparent !important;
+  background: transparent !important;
+}
+
+/* Clean up fractions */
+.katex .mfrac {
+  color: #000000 !important;
+}
+
+.katex .mfrac .frac-line {
+  border-color: #000000 !important;
+}
+
+/* Clean up superscripts and subscripts */
+.katex .msupsub {
+  color: #000000 !important;
+}
+
+/* Clean up roots */
+.katex .mroot {
+  color: #000000 !important;
+}
+
+.katex .mroot .sqrt-sign {
+  color: #000000 !important;
+}
+
+/* Enhanced Spacing for Math Content */
+.prose .katex-display {
+  margin: 0.75rem 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  text-align: left !important;
+}
+
+.prose .katex {
+  font-size: 1.1em !important;
+}
+
+/* Enhanced Typography Scale */
+.prose .text-xs { font-size: 0.7rem; line-height: 1.4; }
+.prose .text-sm { font-size: 0.8rem; line-height: 1.5; }
+.prose .text-base { font-size: 0.9rem; line-height: 1.6; }
+.prose .text-lg { font-size: 1rem; line-height: 1.6; }
+.prose .text-xl { font-size: 1.1rem; line-height: 1.5; }
+.prose .text-2xl { font-size: 1.3rem; line-height: 1.4; }
+
+/* Enhanced Responsive Design */
+@media (max-width: 640px) {
+  .prose {
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+  
+  .prose h1 { font-size: 1.5rem; }
+  .prose h2 { font-size: 1.25rem; }
+  .prose h3 { font-size: 1.125rem; }
+  
+  .prose pre {
+    padding: 1rem;
+    font-size: 0.75rem;
+  }
+  
+  .prose .katex-display {
+    padding: 1rem !important;
+    margin: 1.5rem 0 !important;
+  }
+}
+
+/* Enhanced Print Styles */
+@media print {
+  .prose {
+    color: #000;
+    background: white;
+  }
+  
+  .prose pre {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+  }
+  
+  .prose blockquote {
+    background: #f8f9fa;
+    border-left-color: #6c757d;
+  }
+}
+
+/* Enhanced Focus States for Accessibility */
+.prose a:focus,
+.prose button:focus {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* Enhanced Selection */
+.prose ::selection {
+  background: rgba(99, 102, 241, 0.2);
+  color: inherit;
+}
+
+.prose ::-moz-selection {
+  background: rgba(99, 102, 241, 0.2);
+  color: inherit;
+} 
+
+/* Ensure list items have no shadows */
+.prose ul li,
+.prose ol li,
+.prose-sm ul li,
+.prose-sm ol li {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  background: none !important;
+} 
+
+/* Comprehensive override for all prose elements to remove shadows */
+.prose,
+.prose-sm,
+.prose-lg,
+.prose-xl,
+.prose-2xl {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+.prose *,
+.prose-sm *,
+.prose-lg *,
+.prose-xl *,
+.prose-2xl * {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+/* Specific override for list markers */
+.prose ul li::before,
+.prose ol li::before,
+.prose-sm ul li::before,
+.prose-sm ol li::before,
+.prose-lg ul li::before,
+.prose-lg ol li::before,
+.prose-xl ul li::before,
+.prose-xl ol li::before,
+.prose-2xl ul li::before,
+.prose-2xl ol li::before {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  background: none !important;
+  filter: none !important;
+}
+
+/* Enhanced Enter Button */
+.enter-button {
+  width: 20px !important;
+  height: 20px !important;
+  background: #e5e7eb !important;
+  color: #374151 !important;
+  border-radius: 50% !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  position: absolute !important;
+  right: 8px !important;
+  top: 14px !important;
+  transform: none !important;
+}
+
+.enter-button:hover {
+  background: #d1d5db !important;
+  color: #1f2937 !important;
+  transform: scale(1.1) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+.enter-button:active {
+  transform: scale(0.95) !important;
+}
+
+.enter-button:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+.enter-button:disabled:hover {
+  background: #e5e7eb !important;
+  color: #374151 !important;
+  transform: none !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+}
+
+
+
+/* Full Width Input Field */
+textarea.w-full {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding-left: 16px !important;
+  padding-right: 40px !important;
+}
+
+/* Ensure input container takes full width */
+.relative.w-full {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Additional input field width fixes */
+textarea.w-full,
+input.w-full {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Force full width for all textarea elements in the component */
+.mt-4 textarea {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+} 
