@@ -17,7 +17,7 @@ export default function MemoryDisplay({ isVisible, onClose }) {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:3001/api/memory');
+      const response = await fetch('http://localhost:3000/api/memory');
       if (!response.ok) {
         throw new Error('Failed to fetch memory data');
       }

@@ -15,7 +15,7 @@ export default function LearningPersonaDisplay({ isVisible, onClose }) {
   const fetchPersona = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/learning-persona');
+      const response = await fetch('http://localhost:3000/api/learning-persona');
       const data = await response.json();
       if (data.success) {
         setPersona(data.persona);

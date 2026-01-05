@@ -93,7 +93,7 @@
     background: rgba(156, 163, 175, 0.8);
   }
 
-  /* AI Assistant Text Alignment Fixes */
+  /* Lucid Text Alignment Fixes */
   .ai-response-text p {
     text-align: left !important;
     text-align-last: left !important;

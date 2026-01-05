@@ -148,7 +148,7 @@ class ScreenCaptureService {
       
       const primaryDisplay = screen.getPrimaryDisplay();
       
-      // Get fresh sources
+      // Get screen sources (overlay should be hidden by main.js before this is called)
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: {
@@ -173,6 +173,8 @@ class ScreenCaptureService {
       if (!dataURL) {
         throw new Error('Failed to convert thumbnail to data URL');
       }
+      
+      console.log('Screen capture successful, dataURL length:', dataURL.length);
 
       // Create capture object with all properties
       const capture = {

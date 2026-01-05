@@ -65,7 +65,7 @@ export default function LearningOverlay({
     // Request deeper explanation of the concept
     if (window.electron?.captureScreenOnce) {
       window.electron.captureScreenOnce().then(screenCapture => {
-        fetch('http://localhost:3001/api/ai', {
+        fetch('http://localhost:3000/api/ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

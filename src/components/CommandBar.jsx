@@ -134,6 +134,56 @@ export default function CommandBar() {
 
   const handleQuery = async () => {
     if (!query.trim()) return;
+    
+    // Check for tab grouping command FIRST, before any other processing
+    if (query.toLowerCase().includes('group') && query.toLowerCase().includes('tab')) {
+      setIsLoading(true);
+      setError(null);
+      setResponse('');
+      try {
+        // Get current tabs
+        const tabs = await window.electron.getCurrentTabs();
+        
+        if (!tabs || tabs.length === 0) {
+          setError('No tabs found. Please open some tabs in Chrome first.');
+          setIsLoading(false);
+          setQuery('');
+          return;
+        }
+        
+        setResponse(`Analyzing ${tabs.length} tabs and organizing them into categories...`);
+        
+        // Get suggested groups using AI categorization
+        const groups = await window.electron.suggestTabGroups(tabs);
+        
+        if (!groups || Object.keys(groups).length === 0) {
+          setError('Could not categorize tabs. Please try again.');
+          setIsLoading(false);
+          setQuery('');
+          return;
+        }
+        
+        // Create each group
+        let groupsCreated = 0;
+        for (const [groupName, groupTabs] of Object.entries(groups)) {
+          if (groupTabs && groupTabs.length > 0) {
+            await window.electron.createTabGroup('Google Chrome', groupName, groupTabs);
+            groupsCreated++;
+          }
+        }
+        
+        const groupNames = Object.keys(groups).join(', ');
+        setResponse(`✓ Successfully organized your tabs into ${groupsCreated} categories: ${groupNames}. Check your Chrome window to see the organized groups!`);
+      } catch (error) {
+        console.error('Tab grouping error:', error);
+        setError('Failed to group tabs: ' + error.message);
+      } finally {
+        setIsLoading(false);
+      }
+      setQuery('');
+      return;
+    }
+    
     setIsLoading(true);
     setError(null);
     setResponse('');
@@ -217,7 +267,7 @@ export default function CommandBar() {
         uniqueId: requestBody.screenCapture?.uniqueId
       });
 
-      const response = await fetch('http://localhost:3001/api/ai', {
+      const response = await fetch('http://localhost:3000/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -314,7 +364,7 @@ export default function CommandBar() {
     if (!tutoringSessionId) return;
     
     try {
-      const response = await fetch(`http://localhost:3001/api/tutoring/session/${tutoringSessionId}/end`, {
+      const response = await fetch(`http://localhost:3000/api/tutoring/session/${tutoringSessionId}/end`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -371,7 +421,7 @@ export default function CommandBar() {
           }
         }
 
-        const response = await fetch('http://localhost:3001/api/ai', {
+        const response = await fetch('http://localhost:3000/api/ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
@@ -397,20 +447,40 @@ export default function CommandBar() {
       setIsLoading(true);
       try {
         // Get current tabs
-        const tabs = await window.electron.getCurrentTabs('Google Chrome');
+        const tabs = await window.electron.getCurrentTabs();
         
-        // Get suggested groups
+        if (!tabs || tabs.length === 0) {
+          setError('No tabs found. Please open some tabs in Chrome first.');
+          setIsLoading(false);
+          setQuery('');
+          return;
+        }
+        
+        setResponse(`Analyzing ${tabs.length} tabs and organizing them into categories...`);
+        
+        // Get suggested groups using AI categorization
         const groups = await window.electron.suggestTabGroups(tabs);
         
+        if (!groups || Object.keys(groups).length === 0) {
+          setError('Could not categorize tabs. Please try again.');
+          setIsLoading(false);
+          setQuery('');
+          return;
+        }
+        
         // Create each group
+        let groupsCreated = 0;
         for (const [groupName, groupTabs] of Object.entries(groups)) {
-          if (groupTabs.length > 0) {
+          if (groupTabs && groupTabs.length > 0) {
             await window.electron.createTabGroup('Google Chrome', groupName, groupTabs);
+            groupsCreated++;
           }
         }
         
-        setResponse('✓ Successfully grouped your tabs! Check your Chrome window to see the organized groups.');
+        const groupNames = Object.keys(groups).join(', ');
+        setResponse(`✓ Successfully organized your tabs into ${groupsCreated} categories: ${groupNames}. Check your Chrome window to see the organized groups!`);
       } catch (error) {
+        console.error('Tab grouping error:', error);
         setError('Failed to group tabs: ' + error.message);
       } finally {
         setIsLoading(false);
@@ -608,7 +678,7 @@ export default function CommandBar() {
                     exit={{ opacity: 0, x: -10 }}
                     transition={{ duration: 0.3, delay: 0.2 }}
                   >
-                    AI Assistant
+                    Lucid
                   </motion.div>
                 )}
               </div>

@@ -6,7 +6,14 @@
   "scripts": {
     "dev": "concurrently \"vite --port 5174\" \"electron .\" \"node server.js\"",
     "build": "vite build",
-    "package": "electron-packager . ai-overlay --platform=darwin,win32 --arch=x64 --out=dist",
+    "build:prod": "NODE_ENV=production vite build",
+    "copy-env": "node copy-env.js",
+    "prepackage": "npm run clean-dist && npm run build:prod",
+    "package": "electron-packager . ai-overlay --platform=darwin,win32 --arch=x64 --out=dist --overwrite --ignore='(\\.git$|node_modules[\\\\/](electron-packager|electron-builder)|dist[\\\\/]ai-overlay-|app-dist|\\.vscode|\\.idea|\\.swp$|\\.swo$|\\.DS_Store|coverage$|conversation-history\\.json|learning-persona\\.json|user-memory\\.json|\\.spotify-tokens\\.json|\\.traineddata$)' --app-bundle-id=com.aioverlay.app --app-version=1.0.0 && npm run copy-env",
+    "copy-dist-to-app": "node copy-dist-files.js",
+    "clean-dist": "rm -rf dist/ai-overlay-* app-dist build",
+    "package:mac": "npm run clean-dist && npm run build:prod && electron-packager . ai-overlay --platform=darwin --arch=x64 --out=dist --overwrite --ignore='(\\.git$|node_modules[\\\\/](electron-packager|electron-builder)|dist[\\\\/]ai-overlay-|app-dist|\\.vscode|\\.idea|\\.swp$|\\.swo$|\\.DS_Store|coverage$|conversation-history\\.json|learning-persona\\.json|user-memory\\.json|\\.spotify-tokens\\.json|\\.traineddata$)' --app-bundle-id=com.aioverlay.app --app-version=1.0.0 && node copy-env.js",
+    "package:win": "npm run clean-dist && npm run build:prod && electron-packager . ai-overlay --platform=win32 --arch=x64 --out=dist --overwrite --ignore='(\\.git$|node_modules[\\\\/](electron-packager|electron-builder)|dist[\\\\/]ai-overlay-|app-dist|\\.vscode|\\.idea|\\.swp$|\\.swo$|\\.DS_Store|coverage$|conversation-history\\.json|learning-persona\\.json|user-memory\\.json|\\.spotify-tokens\\.json|\\.traineddata$)' --app-version=1.0.0 && node copy-env.js",
     "server": "node server.js",
     "postinstall": "npm install -g openai-whisper"
   },

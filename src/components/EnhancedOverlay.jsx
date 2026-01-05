@@ -151,7 +151,7 @@ export default function EnhancedOverlay() {
           
           try {
             console.log('Sending transcription request...');
-            const response = await fetch('http://localhost:3001/api/transcribe', {
+            const response = await fetch('http://localhost:3000/api/transcribe', {
               method: 'POST',
               body: formData,
               signal: controller.signal
@@ -261,7 +261,7 @@ export default function EnhancedOverlay() {
       }
 
       console.log('Sending request with isActiveMode:', isActiveMode);
-      const response = await fetch('http://localhost:3001/api/ai', {
+      const response = await fetch('http://localhost:3000/api/ai', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json'

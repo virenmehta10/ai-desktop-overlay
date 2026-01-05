@@ -12,13 +12,17 @@ const os = require('os');
 
 console.log('Loading environment variables...');
 // Load environment variables from .env file
-dotenv.config();
+// In packaged app, look for .env in the app directory (where main.js is)
+const envPath = path.join(__dirname, '.env');
+dotenv.config({ path: envPath });
 console.log('Environment variables loaded. Current working directory:', process.cwd());
+console.log('Looking for .env at:', envPath);
 
 const isDev = process.env.NODE_ENV !== 'production';
 const { getFullSystemPrompt } = require('./src/services/prompts');
 const { learningTools } = require('./src/services/learning-tools');
 const { parsePlayCommand, playSong, spotifyApi, getAuthUrl, handleCallback } = require('./src/services/spotify-service');
+const googleDocsEditor = require('./src/services/google-docs-editor');
 
 // Initialize memory system
 const MemorySystem = require('./src/services/memory-system');
@@ -59,17 +63,12 @@ const openai = new OpenAI({
 // Define model to use - this should be gpt-4o for vision tasks
 const MODEL = 'gpt-4o';
 
-// Add environment variable validation
-const requiredEnvVars = ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET'];
-const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-  console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
-  console.error('Please make sure these variables are set in your .env file');
-  process.exit(1);
+// Spotify credentials are optional - only validate if they're needed
+if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
+  console.log('✅ Spotify credentials loaded successfully');
+} else {
+  console.log('ℹ️  Spotify credentials not configured (optional)');
 }
-
-console.log('✅ Spotify credentials loaded successfully');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -172,6 +171,67 @@ function normalizeAppName(name) {
   return cleanName.split(' ')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+// Helper function to extract full webpage text content from active Chrome tab
+async function extractWebpageText() {
+  return new Promise((resolve, reject) => {
+    const script = `
+      tell application "Google Chrome"
+        activate
+        delay 0.5
+        try
+          -- Get the active tab of the front window
+          set frontWindow to front window
+          set activeTab to active tab of frontWindow
+          
+          -- Execute JavaScript to extract full webpage text
+          set jsCode to "
+            (function() {
+              try {
+                // Get all text content from the page
+                const bodyText = document.body ? document.body.innerText || document.body.textContent : '';
+                const articleText = document.querySelector('article') ? document.querySelector('article').innerText || document.querySelector('article').textContent : '';
+                const mainText = document.querySelector('main') ? document.querySelector('main').innerText || document.querySelector('main').textContent : '';
+                
+                // Prioritize article or main content, fallback to body
+                let fullText = articleText || mainText || bodyText;
+                
+                // Clean up the text - remove excessive whitespace
+                fullText = fullText.replace(/\\s+/g, ' ').trim();
+                
+                return fullText || '';
+              } catch (e) {
+                return '';
+              }
+            })()
+          "
+          
+          set pageText to execute javascript jsCode in activeTab
+          return pageText
+        on error errMsg
+          log "Error extracting webpage text: " & errMsg
+          return ""
+        end try
+      end tell
+    `;
+    
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error, stdout, stderr) => {
+      if (error) {
+        console.warn('Failed to extract webpage text:', error);
+        // Don't reject - just return empty string so we can still use screen capture
+        resolve('');
+        return;
+      }
+      
+      const text = stdout.trim();
+      console.log('Webpage text extracted:', {
+        length: text.length,
+        preview: text.substring(0, 200) + (text.length > 200 ? '...' : '')
+      });
+      resolve(text);
+    });
+  });
 }
 
 // Helper function to generate text explanations
@@ -560,7 +620,7 @@ app.post('/api/ai', async (req, res) => {
   console.log('[API/AI] Incoming request:', req.body.query);
   try {
     // Extract query and resume data from request body
-    const { query, resumeData, context, continuationOnly, screenCapture: contScreenCapture } = req.body;
+    const { query, resumeData, context, continuationOnly, screenCapture: contScreenCapture, contextTabs } = req.body;
     const queryLower = query ? query.toLowerCase().trim() : '';
 
     // Dedicated continuation-only flow: generate raw continuation text and stream it back
@@ -655,6 +715,17 @@ app.post('/api/ai', async (req, res) => {
         return res.end();
       }
     }
+
+    // check for google docs editing requests (grammar, polish, synthesis)
+    // note: normalizedCapture will be defined later in the code flow
+    const hasGoogleDocOpen = contextTabs && contextTabs.some(tab => tab.url && tab.url.includes('docs.google.com'));
+    const isEditRequest = googleDocsEditor.isEditRequest(query);
+    
+    console.log('[GOOGLE DOCS EDITOR] Checking edit request:', {
+      isEditRequest,
+      hasGoogleDocOpen,
+      query: query.substring(0, 50)
+    });
 
     // Check for Google Docs continuation requests specifically - much more precise pattern
     const googleDocsContinuationPattern = /(?:continue|finish|extend|complete|keep writing|wrap up|conclude|fill in|write the next|carry on|help me write|assist with writing|write more|add to|expand|develop|elaborate)\s+(?:writing|the|this\s+(?:essay|paragraph|section|doc|document|writing|content)|from|where|at|this point|here)/i;
@@ -1116,10 +1187,21 @@ The response is now ready to be pasted into your email client. I'll handle the a
       }
     }
 
-    // Alternative Google search patterns
+    // Check for "take notes in google docs" command FIRST (before alternative search patterns)
+    // This prevents "google docs" from being matched by the /google (.+)/i pattern below
+    const takeNotesInGoogleDocsPattern = /^(?:can you )?(?:please )?(?:take|create|make|generate)\s+notes(?:\s+in\s+google\s+docs?)?$/i;
+    const takeNotesInGoogleDocsMatch = queryLower.match(takeNotesInGoogleDocsPattern);
+    const takeNotesOnGoogleDocsPattern = /take notes (?:in|on) google docs/i;
+    const takeNotesOnGoogleDocsMatch = queryLower.match(takeNotesOnGoogleDocsPattern);
+    
+    // If it's a "take notes in google docs" command, skip the alternative search patterns
+    // (The actual handler is later in the code, but we check here to prevent false matches)
+    const isTakeNotesInGoogleDocs = takeNotesInGoogleDocsMatch || takeNotesOnGoogleDocsMatch;
+
+    // Alternative Google search patterns (but exclude "google docs" to prevent false matches)
     const alternativePatterns = [
       /search for (.+)/i,
-      /google (.+)/i,
+      /google (?!docs)(.+)/i,  // Match "google X" but NOT "google docs"
       /look up (.+)/i,
       /find information about (.+)/i,
       /open google and search for (.+)/i
@@ -1127,7 +1209,7 @@ The response is now ready to be pasted into your email client. I'll handle the a
     
     for (const pattern of alternativePatterns) {
       const match = queryLower.match(pattern);
-      if (match) {
+      if (match && !isTakeNotesInGoogleDocs) {  // Skip if it's a "take notes in google docs" command
         const topic = match[1].trim();
         console.log('[ALTERNATIVE SEARCH HANDLER] Detected topic:', topic);
         
@@ -1235,6 +1317,71 @@ The response is now ready to be pasted into your email client. I'll handle the a
         }
       }
     }
+    
+    // re-check google doc detection after we have all the data
+    // sometimes contextTabs might not be set initially, so check again
+    const hasGoogleDocOpenFinal = (contextTabs && contextTabs.some(tab => tab.url && tab.url.includes('docs.google.com'))) ||
+                                   (queryLower.includes('google doc') || queryLower.includes('document'));
+    
+    // handle google docs editing requests IMMEDIATELY after normalizedCapture is set
+    // this must happen BEFORE any other processing to prevent regular AI responses
+    // be very aggressive - if it's an edit request and we have screen capture, assume it's for editing
+    if (isEditRequest && normalizedCapture) {
+      // if we don't have explicit google doc detection, still try to edit if it's a clear edit request
+      const shouldEdit = hasGoogleDocOpen || hasGoogleDocOpenFinal || queryLower.includes('polish') || queryLower.includes('edit') || queryLower.includes('improve');
+      
+      if (shouldEdit) {
+      console.log('[GOOGLE DOCS EDITOR] ✅✅✅ Edit request detected, starting editing workflow...');
+      console.log('[GOOGLE DOCS EDITOR] hasGoogleDocOpen:', hasGoogleDocOpen);
+      console.log('[GOOGLE DOCS EDITOR] hasGoogleDocOpenFinal:', hasGoogleDocOpenFinal);
+      console.log('[GOOGLE DOCS EDITOR] isEditRequest:', isEditRequest);
+      console.log('[GOOGLE DOCS EDITOR] normalizedCapture exists:', !!normalizedCapture);
+      console.log('[GOOGLE DOCS EDITOR] normalizedCapture dataURL length:', normalizedCapture?.dataURL?.length || 0);
+      console.log('[GOOGLE DOCS EDITOR] query:', query);
+      
+      try {
+        // set up streaming response
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        
+        // perform the editing
+        const result = await googleDocsEditor.editGoogleDoc(normalizedCapture, query);
+        
+        // send success message with proper grammar and formatting
+        // Combine into single message with proper spacing to avoid duplication and spacing issues
+        let successMessage = '';
+        if (result.editType === 'grammar') {
+          successMessage = 'Analyzing your document and preparing improvements...\n\nFixed all grammar and spelling errors in your document. Changes have been applied directly to your Google Doc.';
+        } else if (result.editType === 'synthesis') {
+          successMessage = 'Analyzing your document and preparing improvements...\n\nSynthesized your notes into well-written paragraphs. Changes have been applied directly to your Google Doc.';
+        } else {
+          successMessage = 'Analyzing your document and preparing improvements...\n\nPolished and improved your document. Changes have been applied directly to your Google Doc.';
+        }
+        
+        // Send as single message to avoid concatenation issues and duplication
+        res.write(`data: ${JSON.stringify({ content: successMessage })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      } catch (error) {
+        console.error('[GOOGLE DOCS EDITOR] ❌ Editing failed:', error);
+        console.error('[GOOGLE DOCS EDITOR] Error stack:', error.stack);
+        res.write(`data: ${JSON.stringify({ error: error.message || 'Failed to edit document' })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+      }
+    } else if (isEditRequest) {
+      console.log('[GOOGLE DOCS EDITOR] ⚠️ Edit request detected but conditions not met:', {
+        isEditRequest,
+        hasGoogleDocOpen,
+        hasNormalizedCapture: !!normalizedCapture,
+        contextTabsCount: contextTabs?.length || 0,
+        contextTabsUrls: contextTabs?.map(t => t.url).filter(u => u?.includes('docs.google.com'))
+      });
+    }
 
     // Get conversation history context
     let memoryContext = '';
@@ -1278,6 +1425,18 @@ The response is now ready to be pasted into your email client. I'll handle the a
     } catch (learningError) {
       console.error('🎓 Learning persona system error:', learningError);
       // Continue without learning context if there's an error
+    }
+    
+    // IMPORTANT: if this is an edit request, we should have already handled it above
+    // if we reach here with an edit request, something went wrong - log it
+    if (isEditRequest && hasGoogleDocOpen) {
+      console.error('[GOOGLE DOCS EDITOR] ⚠️⚠️⚠️ CRITICAL: Edit request reached regular AI path! This should not happen!');
+      console.error('[GOOGLE DOCS EDITOR] Conditions:', {
+        isEditRequest,
+        hasGoogleDocOpen,
+        hasNormalizedCapture: !!normalizedCapture,
+        query: query.substring(0, 100)
+      });
     }
     
     // Unify all "understanding" queries into a single, robust path
@@ -1557,7 +1716,7 @@ IMPORTANT: Use this conversation history to provide more personalized and releva
 - ...
 `;
 
-        const notesSystemPrompt = `You are an expert note-taking AI assistant with perfect vision and analytical capabilities. You analyze ONLY the current screen content and provide detailed, comprehensive, and educational notes based on what is actually visible. You work completely independently for each request and do not reference any external data, clipboard content, or previous conversations. Each screen capture analysis is completely fresh and independent. You must never use clipboard data or cached content.
+        const notesSystemPrompt = `You are an expert note-taking AI assistant with perfect vision and analytical capabilities. You analyze the current screen content ${webpageText ? 'and full webpage text' : ''} to provide detailed, comprehensive, and educational notes. You work completely independently for each request and do not reference any external data, clipboard content, or previous conversations. Each analysis is completely fresh and independent. You must never use clipboard data or cached content.
 
 **CRITICAL: NEVER APOLOGIZE OR SAY YOU CANNOT SEE SOMETHING**
 - You have perfect vision and can analyze any screen content
@@ -1806,13 +1965,8 @@ CONTENT FOCUS GUIDELINES:
     const takeNotesInWordAltPattern = /take notes (?:in|on) word/i;
     const takeNotesInWordAltMatch = queryLower.match(takeNotesInWordAltPattern);
     
-    // Check for "take notes in google docs" command
-    const takeNotesInGoogleDocsPattern = /^(?:can you )?(?:please )?(?:take|create|make|generate)\s+notes(?:\s+in\s+google\s+docs?)?$/i;
-    const takeNotesInGoogleDocsMatch = queryLower.match(takeNotesInGoogleDocsPattern);
-    
-    // Also check for "take notes on google docs" pattern
-    const takeNotesOnGoogleDocsPattern = /take notes (?:in|on) google docs/i;
-    const takeNotesOnGoogleDocsMatch = queryLower.match(takeNotesOnGoogleDocsPattern);
+    // Note: "take notes in google docs" pattern matching is done earlier to prevent false matches
+    // with the alternative search patterns. The variables are already defined above.
     if (takeNotesInWordMatch || takeNotesInWordAltMatch) {
       console.log('Handling "take notes in Word" command...');
       console.log('Command detected:', query);
@@ -1895,7 +2049,7 @@ CONTENT FOCUS GUIDELINES:
 - ...
 `;
 
-        const notesSystemPrompt = `You are an expert note-taking AI assistant with perfect vision and analytical capabilities. You analyze ONLY the current screen content and provide detailed, comprehensive, and educational notes based on what is actually visible. You work completely independently for each request and do not reference any external data, clipboard content, or previous conversations. Each screen capture analysis is completely fresh and independent. You must never use clipboard data or cached content.
+        const notesSystemPrompt = `You are an expert note-taking AI assistant with perfect vision and analytical capabilities. You analyze the current screen content ${webpageText ? 'and full webpage text' : ''} to provide detailed, comprehensive, and educational notes. You work completely independently for each request and do not reference any external data, clipboard content, or previous conversations. Each analysis is completely fresh and independent. You must never use clipboard data or cached content.
 
 **CRITICAL: NEVER APOLOGIZE OR SAY YOU CANNOT SEE SOMETHING**
 - You have perfect vision and can analyze any screen content
@@ -2206,11 +2360,25 @@ CONTENT FOCUS GUIDELINES:
           dataURLStart: normalizedCapture.dataURL.substring(0, 50) + '...'
         });
         
-        // Create notes prompt with strict instructions to only analyze the current screen
+        // Extract full webpage text content from the active Chrome tab
+        console.log('Extracting full webpage text content...');
+        let webpageText = '';
+        try {
+          webpageText = await extractWebpageText();
+          console.log('Webpage text extraction result:', {
+            length: webpageText.length,
+            hasContent: webpageText.length > 0,
+            preview: webpageText.substring(0, 300) + (webpageText.length > 300 ? '...' : '')
+          });
+        } catch (error) {
+          console.warn('Failed to extract webpage text, continuing with screen capture only:', error);
+        }
+        
+        // Create notes prompt with strict instructions to analyze both screen and webpage content
         const notesPrompt = `# Comprehensive Learning Notes
 
 **INSTRUCTIONS:**
-- Analyze the current screen image and create the most comprehensive, educational, and visually appealing notes possible.
+- Analyze the current screen image ${webpageText ? 'AND the full webpage text content provided below' : ''} to create the most comprehensive, educational, and visually appealing notes possible.
 - Structure the notes with the following sections:
   - **Overview**
   - **Key Concepts**
@@ -2221,13 +2389,13 @@ CONTENT FOCUS GUIDELINES:
 - The 'Takeaway Questions' section should include 2-3 thought-provoking questions to encourage further learning.
 - Use bold for section headers and key terms, and clear markdown for structure.
 - Be thorough, educational, and engaging—explain as if you are a world-class tutor.
-- Focus ONLY on the specific content currently displayed on screen.
+- Focus on the content from both the screen image ${webpageText ? 'and the full webpage text' : ''}.
 - Do NOT reference any clipboard data, previous conversations, or cached content.
 - Do NOT use any external knowledge or previous notes.
 - Each request should be treated as completely independent.
-- Only analyze what is currently visible on the screen.
 - ALWAYS provide notes if there is any text content visible, even if minimal.
 - Be confident in your analysis—if you can see text, create notes about it.
+${webpageText ? `\n**FULL WEBPAGE TEXT CONTENT:**\n${webpageText.substring(0, 10000)}${webpageText.length > 10000 ? '\n[... content truncated for length ...]' : ''}` : ''}
 
 ## Example Structure:
 
@@ -2254,7 +2422,7 @@ CONTENT FOCUS GUIDELINES:
 - ...
 `;
 
-        const notesSystemPrompt = `You are an expert note-taking AI assistant with perfect vision and analytical capabilities. You analyze ONLY the current screen content and provide detailed, comprehensive, and educational notes based on what is actually visible. You work completely independently for each request and do not reference any external data, clipboard content, or previous conversations. Each screen capture analysis is completely fresh and independent. You must never use clipboard data or cached content.
+        const notesSystemPrompt = `You are an expert note-taking AI assistant with perfect vision and analytical capabilities. You analyze the current screen content ${webpageText ? 'and full webpage text' : ''} to provide detailed, comprehensive, and educational notes. You work completely independently for each request and do not reference any external data, clipboard content, or previous conversations. Each analysis is completely fresh and independent. You must never use clipboard data or cached content.
 
 **CRITICAL: NEVER APOLOGIZE OR SAY YOU CANNOT SEE SOMETHING**
 - You have perfect vision and can analyze any screen content
@@ -2448,38 +2616,94 @@ CONTENT FOCUS GUIDELINES:
           });
         });
         
-        // Open Google Docs in Chrome and create a new document
+        // Simple, direct approach: try to find existing tab, otherwise open new one
+        console.log('Opening Google Docs and pasting notes...');
+        
         await new Promise((resolve, reject) => {
           const appleScript = `
             tell application "Google Chrome"
               activate
-              delay 1
-              tell application "System Events"
-                keystroke "t" using command down
-                delay 1
-                keystroke "https://docs.google.com/document/create"
+              delay 0.2
+              
+              -- Try to find existing Google Docs tab quickly
+              set foundTab to false
+              try
+                repeat with w in every window
+                  try
+                    repeat with t in every tab of w
+                      try
+                        if (URL of t) contains "docs.google.com/document" then
+                          set active tab of w to t
+                          set index of w to 1
+                          set foundTab to true
+                          exit repeat
+                        end if
+                      end try
+                    end repeat
+                    if foundTab then exit repeat
+                  end try
+                end repeat
+              end try
+              
+              -- If not found, open new tab
+              if not foundTab then
+                tell application "System Events"
+                  tell process "Google Chrome"
+                    keystroke "t" using command down
+                    delay 0.4
+                    keystroke "https://docs.google.com/document/create"
+                    delay 0.3
+                    keystroke return
+                    delay 2.5
+                  end tell
+                end tell
+              else
                 delay 0.5
-                keystroke return
-                delay 3
+              end if
+            end tell
+            
+            tell application "System Events"
+              tell process "Google Chrome"
+                set frontmost to true
+                delay 0.2
+                
+                -- Click center to focus editor
+                try
+                  set win to front window
+                  set {wx, wy} to position of win
+                  set {ww, wh} to size of win
+                  click at {wx + ww / 2, wy + wh / 2 + 80}
+                  delay 0.2
+                end try
+                
+                -- Paste
+                keystroke "a" using command down
+                delay 0.15
                 keystroke "v" using command down
-                delay 1
+                delay 0.3
               end tell
             end tell
           `;
-          exec(`osascript -e '${appleScript}'`, (error) => {
+          
+          const timeout = setTimeout(() => {
+            reject(new Error('Operation timed out'));
+          }, 8000);
+          
+          exec(`osascript -e '${appleScript.replace(/'/g, "'\\''")}'`, (error, stdout, stderr) => {
+            clearTimeout(timeout);
+            
             if (error) {
-              console.error('AppleScript error (Google Docs):', error);
-              reject(new Error(`Failed to open Google Docs: ${error.message}`));
-              return;
+              console.error('AppleScript error:', error.message);
+              // Don't fail - clipboard has the content
+              console.log('Notes are in clipboard - you can paste manually if needed');
             }
-            console.log('Google Docs automation completed successfully');
-            // Clean up the temporary file
+            
             try {
               fs.unlinkSync(tempNotesFile);
-              console.log('Temporary file cleaned up');
             } catch (cleanupError) {
-              console.warn('Failed to clean up temporary notes file:', cleanupError);
+              // Ignore cleanup errors
             }
+            
             resolve();
           });
         });
@@ -2885,8 +3109,8 @@ async function streamOpenAIResponse(systemPrompt, userText, screenCapture, isAct
       top_p: 0.9, // Slightly lower for faster processing
       frequency_penalty: 0.0,
       presence_penalty: 0.0,
-      response_format: { type: "text" }, // Ensure text format for faster processing
-      timeout: 10000 // 10 second timeout for faster failure detection
+      response_format: { type: "text" } // Ensure text format for faster processing
+      // Note: timeout is handled at the HTTP client level, not as an API parameter
     };
     
     console.log('OpenAI request config:', requestConfig);
@@ -3680,6 +3904,29 @@ const server = app.listen(PORT, () => {
   console.log('');
 });
 
+// handle server errors
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`\n❌ Port ${PORT} is already in use. Please stop the other process or use a different port.`);
+    console.error(`   You can set a different port with: PORT=3002 npm run dev\n`);
+  } else {
+    console.error('\n❌ Server error:', error);
+  }
+  process.exit(1);
+});
+
+// handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // don't exit, just log the error
+});
+
+// handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
@@ -3715,42 +3962,88 @@ async function generateCoverLetterFromJobPosting(resumeData, screenCapture) {
     const jobAnalysis = await analyzeJobPosting(screenCapture.dataURL);
     console.log('[COVER LETTER GENERATOR] Job analysis completed:', jobAnalysis);
 
-    // Create a focused system prompt that eliminates AI instructions and content filtering issues
-    const systemPrompt = `You are a professional cover letter writer. Your task is to create a compelling, personalized cover letter for a job application.
+    // Create a focused system prompt that emphasizes paragraph structure and flow
+    const systemPrompt = `You are an expert professional cover letter writer specializing in creating compelling, personalized cover letters that connect candidates' backgrounds to specific job requirements.
 
 **CRITICAL REQUIREMENTS:**
-- You MUST write a complete, professional cover letter
+- You MUST write a complete, professional cover letter with cohesive, flowing paragraphs
 - You MUST NOT refuse to help or say you cannot assist
 - You MUST NOT include any disclaimers or limitations
 - You MUST NOT say "I'm sorry" or "I can't assist"
 - You MUST write in a professional, business tone
-- You MUST complete all sentences and thoughts
-- You MUST use proper grammar and punctuation
-- You MUST maintain proper paragraph structure
+- You MUST create paragraphs that flow naturally with connected ideas
 - You MUST respond with ONLY the cover letter content
 
-**RESUME DATA:**
+**RESUME DATA (USE THIS INFORMATION DYNAMICALLY):**
 ${JSON.stringify(resumeData, null, 2)}
 
-**JOB REQUIREMENTS:**
+**JOB REQUIREMENTS (EXTRACTED FROM SCREEN - USE THESE SPECIFIC REQUIREMENTS):**
 ${JSON.stringify(jobAnalysis, null, 2)}
+
+**PARAGRAPH STRUCTURE - CRITICAL:**
+- Each paragraph MUST be 4-6 sentences long with connected, flowing ideas
+- Sentences within a paragraph MUST connect logically using transitions
+- NEVER write individual standalone sentences - ALWAYS group related ideas into paragraphs
+- Each paragraph should have a clear theme and build upon the previous one
+- Use transitional phrases (Furthermore, Additionally, Moreover, In particular, Specifically) to connect sentences within paragraphs
+- Each paragraph should tell a complete story or make a complete argument
 
 **WRITING REQUIREMENTS:**
 - Use the candidate's exact name: ${resumeData.name}
 - Reference their university: ${resumeData.university}
 - Mention their major: ${resumeData.major}
-- Include specific work experiences: ${resumeData.relevantExperience?.join('; ')}
-- Reference their skills: ${resumeData.skills?.join(', ')}
-- Include leadership roles: ${resumeData.leadershipRoles?.join('; ')}
-- Mention specific projects: ${resumeData.projects?.join('; ')}
-- Include quantifiable achievements: ${resumeData.achievements?.join('; ')}
-- Include extracurricular activities: ${resumeData.extracurriculars?.join('; ')}
-- Connect their background to the specific job requirements
+- Include specific work experiences with details: ${resumeData.relevantExperience?.join('; ')}
+- Reference their skills with context: ${resumeData.skills?.join(', ')}
+- Include leadership roles with impact: ${resumeData.leadershipRoles?.join('; ')}
+- Mention specific projects with outcomes: ${resumeData.projects?.join('; ')}
+- Include quantifiable achievements with numbers: ${resumeData.achievements?.join('; ')}
+- Include extracurricular activities with relevance: ${resumeData.extracurriculars?.join('; ')}
+- Connect their background to SPECIFIC job requirements from the posting
+- Reference specific requirements mentioned in the job posting
 - Use sophisticated, high-level professional language
 - Avoid generic phrases and clichés
-- ALWAYS start the opening paragraph with "I am writing to express my sincere interest in..." or similar complete sentence
-- NEVER start sentences with prepositions or leave thoughts incomplete
-- Maintain proper paragraph structure with clear line breaks
+
+**PARAGRAPH-BY-PARAGRAPH STRUCTURE - CRITICAL: Write EXACTLY 5 paragraphs:**
+
+**Opening Paragraph (3-5 sentences):**
+- Start with: "I am writing to express my sincere interest in the [EXACT JOB TITLE] position at [COMPANY NAME]."
+- Introduce your background (university, major, year)
+- State why you're interested in this specific role and company
+- Preview how your qualifications align with their needs
+- Connect your academic background to the role's requirements
+
+**First Body Paragraph (4-6 sentences):**
+- Focus on your most relevant work experience
+- Describe specific achievements with numbers and impact
+- Connect these achievements to specific job requirements mentioned in the posting
+- Explain how this experience prepared you for this role
+- Use specific examples from the job posting
+- Show how you've already demonstrated the skills they're seeking
+
+**Second Body Paragraph (4-6 sentences):**
+- Focus on leadership roles, projects, or additional relevant experience
+- Describe how you've led teams or delivered results
+- Connect to additional job requirements from the posting
+- Show strategic thinking and high-level impact
+- Demonstrate innovation and problem-solving capabilities
+- Use quantifiable achievements and specific examples
+
+**Third Body Paragraph (4-6 sentences):**
+- Highlight additional relevant skills or experiences
+- Connect to preferred qualifications or company culture
+- Show enthusiasm for the specific role and company
+- Demonstrate understanding of the industry/company
+- Reference specific aspects of the job that excite you
+- Connect additional achievements or qualifications
+
+**Closing Paragraph (3-5 sentences):**
+- Summarize your fit for the role
+- Express enthusiasm for the opportunity
+- Request an interview or next steps
+- Thank them for consideration
+- End with a professional closing
+
+**CRITICAL: The cover letter MUST have exactly 5 paragraphs total. Each paragraph must be 3-6 sentences with connected, flowing ideas. Do NOT add extra paragraphs or standalone sentences.**
 
 **WRITING STYLE:**
 - Sophisticated and professional tone
@@ -3760,71 +4053,84 @@ ${JSON.stringify(jobAnalysis, null, 2)}
 - Connect experiences to broader business objectives
 - Demonstrate executive-level thinking and communication
 - Ensure complete, grammatically correct sentences
-- Maintain logical flow and coherence between paragraphs
-- Use transitional phrases to connect ideas
-- Avoid sentence fragments and incomplete thoughts
+- Use varied sentence structure (mix of short and long sentences)
+- Create natural flow between sentences using transitions
 
 **CRITICAL WRITING RULES:**
-- ALWAYS start sentences with proper subjects (I, My, This, etc.)
-- NEVER start sentences with prepositions (in, at, with, etc.)
-- NEVER leave sentences incomplete or hanging
-- ALWAYS use proper transitions between paragraphs
-- ALWAYS complete thoughts and ideas fully
-- ALWAYS use proper punctuation and grammar
-
-**STRUCTURE:**
-- Professional header with contact information
-- Date
-- Recipient information (Hiring Manager, Company Name)
-- Compelling opening paragraph with specific position and company
-- 2-3 body paragraphs connecting resume achievements to job requirements
-- Strong closing paragraph requesting an interview
-- Professional signature
-
-**OPENING PARAGRAPH REQUIREMENTS:**
-- MUST start with "I am writing to express my sincere interest in..." or similar complete sentence
-- MUST clearly state the position and company
-- MUST introduce your background and qualifications
-- MUST be grammatically complete and professional
+- ALWAYS write in complete paragraphs (4-6 sentences each)
+- NEVER write individual standalone sentences
+- ALWAYS connect sentences within paragraphs using transitions
+- ALWAYS connect your experience to SPECIFIC requirements from the job posting
+- ALWAYS use the exact job title and company name from the posting
+- ALWAYS reference specific skills, requirements, or responsibilities mentioned in the posting
+- Use quantifiable achievements (numbers, percentages, dollar amounts)
+- Show impact and results, not just responsibilities
 
 **FORMATTING:**
-- Maintain proper paragraph spacing with line breaks
-- Use professional formatting with clear sections
-- Ensure readability and professional appearance
-- PRESERVE all intentional line breaks and paragraph structure
-- Do NOT compress text into single blocks
-- Use proper spacing between sections
+- Use double line breaks between paragraphs
+- Single line breaks within paragraphs are fine for readability
+- Maintain professional formatting with clear sections
+- PRESERVE paragraph structure - do not compress into single blocks
 
 **OUTPUT:**
-Return ONLY the cover letter text with proper spacing between sections. No markdown, no code blocks, no explanations, no disclaimers.`;
+Return ONLY the cover letter text with proper paragraph structure. Each paragraph should be 4-6 sentences with connected, flowing ideas. No markdown, no code blocks, no explanations, no disclaimers.`;
 
     console.log('[COVER LETTER GENERATOR] Sending request to OpenAI...');
 
-    // Create a focused user prompt
-    const userPrompt = `Create a high-level, professional cover letter for this job posting using my resume information. 
+    // Create a focused user prompt emphasizing paragraph structure
+    const userPrompt = `Create a compelling, professional cover letter for this job posting using my resume information. 
 
-Focus on:
-- My specific work experience and achievements
-- How my skills match the job requirements
-- My relevant projects and leadership experience
-- Specific numbers and statistics from my resume
-- Strategic thinking and high-level impact
-- Leadership and innovation capabilities
+**CRITICAL: Write in cohesive paragraphs, NOT individual sentences.**
 
-Use sophisticated, professional language that demonstrates executive-level thinking. Maintain proper paragraph structure with clear line breaks.
+**Job Information (from screen):**
+- Job Title: ${jobAnalysis.title || 'Position'}
+- Company: ${jobAnalysis.company || 'Company'}
+- Key Requirements: ${jobAnalysis.requirements?.join(', ') || 'See job posting'}
+- Preferred Skills: ${jobAnalysis.preferredSkills?.join(', ') || 'See job posting'}
+- Responsibilities: ${jobAnalysis.responsibilities?.join(', ') || 'See job posting'}
 
-CRITICAL REQUIREMENTS: 
-- Preserve all formatting, line breaks, and paragraph spacing. Do not compress text into single blocks.
-- Write complete, grammatically correct sentences
-- Ensure logical flow between paragraphs
-- Use proper transitions and connections
-- ALWAYS start the opening paragraph with "I am writing to express my sincere interest in..." or similar complete sentence
-- NEVER start sentences with prepositions or leave thoughts incomplete
-- DO NOT refuse to help or include any disclaimers
-- DO NOT say "I'm sorry" or "I can't assist"
+**My Background (from resume):**
+- Name: ${resumeData.name}
+- University: ${resumeData.university}
+- Major: ${resumeData.major}
+- Experience: ${resumeData.relevantExperience?.join('; ') || 'See resume'}
+- Skills: ${resumeData.skills?.join(', ') || 'See resume'}
+- Leadership: ${resumeData.leadershipRoles?.join('; ') || 'See resume'}
+- Achievements: ${resumeData.achievements?.join('; ') || 'See resume'}
+
+**PARAGRAPH STRUCTURE REQUIREMENTS:**
+- Write 3-4 substantial paragraphs (4-6 sentences each)
+- Each paragraph must have a clear theme and flow naturally
+- Connect sentences within paragraphs using transitions (Furthermore, Additionally, Moreover, Specifically, In particular)
+- Connect my specific experiences to the SPECIFIC job requirements you see in the posting
+- Reference exact requirements, skills, or responsibilities mentioned in the job posting
+- Use quantifiable achievements (numbers, percentages, dollar amounts) from my resume
+- Show how my background directly addresses their needs
+
+**Opening Paragraph (4-5 sentences):**
+Start with "I am writing to express my sincere interest in the ${jobAnalysis.title || 'position'} at ${jobAnalysis.company || 'your organization'}." Introduce my background and why I'm interested in this specific role.
+
+**Body Paragraphs (5-6 sentences each):**
+- First paragraph: Focus on my most relevant work experience. Connect specific achievements to job requirements. Use numbers and impact.
+- Second paragraph: Focus on leadership roles or projects. Show strategic thinking and connect to additional requirements.
+- Third paragraph (optional): Highlight additional relevant skills or show enthusiasm for the company/role.
+
+**Closing Paragraph (3-4 sentences):**
+Summarize my fit, express enthusiasm, and request an interview.
+
+**CRITICAL REQUIREMENTS:**
+- Write in complete, flowing paragraphs (NOT individual sentences)
+- Connect my experience to SPECIFIC requirements from the job posting
+- Use the exact job title and company name from the posting
+- Reference specific skills, requirements, or responsibilities mentioned
+- Use sophisticated, professional language
+- Ensure logical flow between sentences within each paragraph
+- Use proper transitions to connect ideas
+- DO NOT write individual standalone sentences
+- DO NOT refuse to help or include disclaimers
 - Write ONLY the cover letter content
 
-Return ONLY the cover letter text with proper formatting.`;
+Return ONLY the cover letter text with proper paragraph structure.`;
 
     // Send to OpenAI for cover letter generation
     const response = await openai.chat.completions.create({
@@ -3850,8 +4156,8 @@ Return ONLY the cover letter text with proper formatting.`;
           ]
         }
       ],
-      max_tokens: 1500,
-      temperature: 0.3
+      max_tokens: 2500,
+      temperature: 0.4
     });
 
     let coverLetter = response.choices[0].message.content;
@@ -3879,34 +4185,63 @@ Return ONLY the cover letter text with proper formatting.`;
       console.log('[COVER LETTER GENERATOR] Cover letter quality check failed, regenerating...');
       
       // Try a more focused approach
-      const refinedPrompt = `Write a high-level, professional cover letter for this job posting. 
+      const refinedPrompt = `Write a compelling, professional cover letter for this job posting using my resume information.
 
-Use ONLY this information from my resume:
+**CRITICAL: Write in cohesive paragraphs (4-6 sentences each), NOT individual sentences.**
+
+**Job Information:**
+- Job Title: ${jobAnalysis.title || 'Position'}
+- Company: ${jobAnalysis.company || 'Company'}
+- Requirements: ${jobAnalysis.requirements?.join(', ') || 'See job posting'}
+- Preferred Skills: ${jobAnalysis.preferredSkills?.join(', ') || 'See job posting'}
+- Responsibilities: ${jobAnalysis.responsibilities?.join(', ') || 'See job posting'}
+
+**My Background:**
 - Name: ${resumeData.name}
-- University: ${resumeData.university} 
+- University: ${resumeData.university}
 - Major: ${resumeData.major}
 - Experience: ${resumeData.relevantExperience?.join('; ')}
 - Skills: ${resumeData.skills?.join(', ')}
-- GPA: ${resumeData.gpa || 'Not specified'}
-- Leadership Roles: ${resumeData.leadershipRoles?.join('; ')}
+- Leadership: ${resumeData.leadershipRoles?.join('; ')}
 - Projects: ${resumeData.projects?.join('; ')}
 - Achievements: ${resumeData.achievements?.join('; ')}
 - Extracurriculars: ${resumeData.extracurriculars?.join('; ')}
 
-Job requirements: ${jobAnalysis.requirements?.join(', ')}
+**PARAGRAPH STRUCTURE:**
+- Write 3-4 substantial paragraphs (4-6 sentences each)
+- Each paragraph must flow naturally with connected ideas
+- Connect my specific experiences to the SPECIFIC job requirements
+- Use transitions (Furthermore, Additionally, Moreover, Specifically) to connect sentences
+- Reference exact requirements from the job posting
+- Use quantifiable achievements with numbers
 
-Write a sophisticated, compelling cover letter that demonstrates strategic thinking and connects my specific experience to these job requirements. Include specific achievements, numbers, and leadership examples from my resume. Use high-level professional language and maintain proper paragraph structure with clear line breaks. 
+**CRITICAL: Write EXACTLY 5 paragraphs total, each with 3-6 sentences:**
 
-CRITICAL REQUIREMENTS: Write complete, grammatically correct sentences with proper transitions between paragraphs. Ensure logical flow and coherence. ALWAYS start the opening paragraph with "I am writing to express my sincere interest in..." or similar complete sentence. NEVER start sentences with prepositions or leave thoughts incomplete. DO NOT refuse to help or include any disclaimers. DO NOT say "I'm sorry" or "I can't assist". Write ONLY the cover letter content.
+**Opening Paragraph (3-5 sentences):**
+Start with "I am writing to express my sincere interest in the ${jobAnalysis.title || 'position'} at ${jobAnalysis.company || 'your organization'}." Introduce my background and interest.
 
-Return ONLY the cover letter text.`;
+**First Body Paragraph (4-6 sentences):**
+Connect my most relevant work experience to specific job requirements. Show leadership and strategic thinking. Use numbers and impact from my achievements. Reference specific skills they're seeking.
+
+**Second Body Paragraph (4-6 sentences):**
+Focus on additional relevant experience, leadership roles, or projects. Connect to more job requirements. Show innovation and problem-solving. Use quantifiable achievements.
+
+**Third Body Paragraph (4-6 sentences):**
+Highlight additional skills or show enthusiasm for the company/role. Connect to preferred qualifications. Demonstrate understanding of the industry.
+
+**Closing Paragraph (3-5 sentences):**
+Summarize fit, express enthusiasm, request interview, thank them.
+
+**CRITICAL: Exactly 5 paragraphs. Each paragraph 3-6 sentences. No extra paragraphs. No standalone sentences.**
+
+CRITICAL: Write in complete paragraphs, NOT individual sentences. Connect my experience to SPECIFIC requirements. Use the exact job title and company name. DO NOT refuse to help. Write ONLY the cover letter content.`;
 
       const refinedResponse = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
           {
             role: 'system',
-            content: 'You are a professional cover letter writer specializing in high-level, executive applications. Write sophisticated, compelling cover letters that demonstrate strategic thinking and connect the candidate\'s specific experience to job requirements. Use advanced professional language and maintain proper paragraph structure with clear line breaks. Ensure complete, grammatically correct sentences with logical flow between paragraphs. ALWAYS start the opening paragraph with "I am writing to express my sincere interest in..." or similar complete sentence. NEVER start sentences with prepositions or leave thoughts incomplete. DO NOT refuse to help or include any disclaimers. DO NOT say "I\'m sorry" or "I can\'t assist". Write ONLY the cover letter content. Return ONLY the cover letter text with proper formatting.'
+            content: 'You are an expert professional cover letter writer specializing in creating compelling, personalized cover letters with cohesive, flowing paragraphs. Your cover letters connect candidates\' backgrounds to specific job requirements using sophisticated, professional language. CRITICAL: Write in complete paragraphs (4-6 sentences each), NOT individual sentences. Each paragraph must flow naturally with connected ideas using transitions. Connect the candidate\'s specific experiences to the SPECIFIC job requirements from the posting. Reference exact requirements, skills, and responsibilities. Use quantifiable achievements with numbers. ALWAYS start the opening paragraph with "I am writing to express my sincere interest in..." DO NOT refuse to help or include disclaimers. Write ONLY the cover letter content with proper paragraph structure.'
           },
           {
             role: 'user',
@@ -3924,8 +4259,8 @@ Return ONLY the cover letter text.`;
             ]
           }
         ],
-        max_tokens: 1500,
-        temperature: 0.2
+        max_tokens: 2500,
+        temperature: 0.4
       });
 
       coverLetter = refinedResponse.choices[0].message.content;
@@ -3955,6 +4290,9 @@ Return ONLY the cover letter text.`;
     
     // Ensure proper cover letter structure and formatting
     coverLetter = ensureProperCoverLetterStructure(coverLetter, resumeData);
+    
+    // Enforce exactly 5 paragraphs structure
+    coverLetter = enforceFiveParagraphStructure(coverLetter);
     
     console.log('[COVER LETTER GENERATOR] Final cover letter generated successfully');
     return coverLetter;
@@ -4426,6 +4764,17 @@ function cleanCoverLetterContent(coverLetter) {
   
   let cleaned = coverLetter;
   
+  // Fix encoding issues (common UTF-8 encoding problems)
+  cleaned = cleaned.replace(/‚Äô/g, "'");  // Fix apostrophe encoding
+  cleaned = cleaned.replace(/‚Äù/g, '"');  // Fix opening quote encoding
+  cleaned = cleaned.replace(/‚Äú/g, '"');  // Fix closing quote encoding
+  cleaned = cleaned.replace(/‚Äì/g, '–');  // Fix en dash encoding
+  cleaned = cleaned.replace(/‚Äî/g, '—');  // Fix em dash encoding
+  cleaned = cleaned.replace(/â€™/g, "'");  // Another apostrophe encoding
+  cleaned = cleaned.replace(/â€œ/g, '"');  // Another quote encoding
+  cleaned = cleaned.replace(/â€/g, '"');   // Another quote encoding
+  cleaned = cleaned.replace(/â€"/g, '—');  // Another dash encoding
+  
   // Remove AI instructions and commentary (but DO NOT remove valid opening sentences)
   const aiInstructions = [
     /feel free to adjust any details/i,
@@ -4594,10 +4943,24 @@ ${new Date().toLocaleDateString('en-US', {
   // Ensure proper paragraph spacing without removing intentional breaks
   enhanced = enhanced.replace(/\n\s*\n\s*\n/g, '\n\n');
   
+  // Fix encoding issues
+  enhanced = enhanced.replace(/‚Äô/g, "'");
+  enhanced = enhanced.replace(/‚Äù/g, '"');
+  enhanced = enhanced.replace(/‚Äú/g, '"');
+  enhanced = enhanced.replace(/‚Äì/g, '–');
+  enhanced = enhanced.replace(/‚Äî/g, '—');
+  enhanced = enhanced.replace(/â€™/g, "'");
+  enhanced = enhanced.replace(/â€œ/g, '"');
+  enhanced = enhanced.replace(/â€/g, '"');
+  enhanced = enhanced.replace(/â€"/g, '—');
+  
   // Enhanced grammar fixes for common fragment issues
   enhanced = enhanced.replace(/\n\s*the opportunity to/gi, '\nI am excited about the opportunity to');
   enhanced = enhanced.replace(/Thank you for considering my application\.\s*the (opportunity|possibility) of/gi, 'Thank you for considering my application. I welcome the $1 of');
   enhanced = enhanced.replace(/([.!?])\s+the\s+/g, '$1 The ');
+  
+  // Remove any "In relation to..." paragraphs that shouldn't be there
+  enhanced = enhanced.replace(/\n\nIn relation to the .+? stakeholders\./g, '');
   
   // Fix common incomplete sentences with more comprehensive patterns
   enhanced = enhanced.replace(/\n\s*in the\s+([A-Z][a-z]+)\s+position/gi, '\nI am applying for the $1 position');
@@ -4620,37 +4983,9 @@ ${new Date().toLocaleDateString('en-US', {
   enhanced = enhanced.replace(/\benthusiasms\b/gi, 'enthusiasm');
   enhanced = enhanced.replace(/\b([a-z]+)ing\s+([a-z]+)\s+([a-z]+)\b/gi, '$1ing $2 $3');
   
-  // Ensure there is a concise paragraph explicitly connecting fit to the role
-  try {
-    const jobTitle = jobAnalysis?.title || 'this role';
-    const companyName = jobAnalysis?.company || 'your organization';
-    const topRequirements = (jobAnalysis?.requirements || jobAnalysis?.preferredSkills || [])
-      .filter(Boolean)
-      .slice(0, 3);
-    const topSkills = (resumeData?.skills || []).filter(Boolean).slice(0, 5);
-    const topExperiences = (resumeData?.relevantExperience || [])
-      .map(exp => (typeof exp === 'string' ? exp.split(' - ')[0] : exp))
-      .filter(Boolean)
-      .slice(0, 2);
-
-    const hasExplicitFit = new RegExp(`${jobTitle}`, 'i').test(enhanced) && new RegExp(`${companyName}`, 'i').test(enhanced);
-
-    if (!hasExplicitFit) {
-      const reqText = topRequirements.length ? `, including ${topRequirements.join(', ')}` : '';
-      const skillsText = topSkills.length ? `${topSkills.join(', ')}` : 'a strong analytical toolkit and communication skills';
-      const expText = topExperiences.length ? `${topExperiences.join(' and ')}` : 'my prior roles and leadership experiences';
-      const fitParagraph = `\n\nIn relation to the ${jobTitle} at ${companyName}, I offer ${skillsText}. Notably, ${expText} demonstrate my ability to deliver against key priorities${reqText}. I am confident I can contribute immediately by driving measurable outcomes, collaborating across teams, and communicating insights clearly to stakeholders.`;
-
-      const signatureIndex = enhanced.search(/\nSincerely,?/i);
-      if (signatureIndex > -1) {
-        enhanced = enhanced.slice(0, signatureIndex) + fitParagraph + enhanced.slice(signatureIndex);
-      } else {
-        enhanced += fitParagraph;
-      }
-    }
-  } catch (_) {
-    // If fit augmentation fails, proceed without blocking
-  }
+    // DO NOT add extra paragraphs - the AI should generate exactly 5 paragraphs
+    // Remove any "In relation to..." paragraphs that might have been added
+    enhanced = enhanced.replace(/\n\nIn relation to the .+? stakeholders\./g, '');
   
   // Final grammar validation and fixes
   enhanced = validateAndFixGrammar(enhanced);
@@ -4713,9 +5048,23 @@ function performFinalGrammarCheck(text) {
   // Ensure proper spacing after punctuation
   checked = checked.replace(/([.!?])([A-Z])/g, '$1 $2');
   
+  // Fix encoding issues
+  checked = checked.replace(/‚Äô/g, "'");
+  checked = checked.replace(/‚Äù/g, '"');
+  checked = checked.replace(/‚Äú/g, '"');
+  checked = checked.replace(/‚Äì/g, '–');
+  checked = checked.replace(/‚Äî/g, '—');
+  checked = checked.replace(/â€™/g, "'");
+  checked = checked.replace(/â€œ/g, '"');
+  checked = checked.replace(/â€/g, '"');
+  checked = checked.replace(/â€"/g, '—');
+  
   // Fix common word choice and grammar issues
   checked = checked.replace(/\benthusiasms\b/gi, 'enthusiasm');
   checked = checked.replace(/\b([a-z]+)ing\s+([a-z]+)\s+([a-z]+)\b/gi, '$1ing $2 $3');
+  
+  // Remove any "In relation to..." paragraphs
+  checked = checked.replace(/\n\nIn relation to the .+? stakeholders\./g, '');
   
   // Ensure proper paragraph structure
   checked = checked.replace(/\n{3,}/g, '\n\n');
@@ -4766,9 +5115,9 @@ ${new Date().toLocaleDateString('en-US', {
   // Add double line breaks after company name
   structured = structured.replace(/([A-Z][a-z]+)\s+(I am writing)/g, '$1\n\n$2');
   
-  // FORCE paragraph breaks in the body by adding double line breaks after sentences
-  // This is the critical fix - we need to ensure every sentence gets proper spacing
-  structured = structured.replace(/([.!?])\s+([A-Z][a-z])/g, '$1\n\n$2');
+  // DO NOT force paragraph breaks after every sentence - preserve natural paragraph structure
+  // Only add paragraph breaks where there are clear topic shifts or after complete thoughts
+  // This preserves the natural flow of paragraphs that the AI generates
   
   // Add explicit paragraph breaks for common cover letter patterns
   structured = structured.replace(/(\n)(I am writing to express my sincere interest)/g, '$1\n$2');
@@ -4793,6 +5142,65 @@ ${new Date().toLocaleDateString('en-US', {
   console.log('[STRUCTURE ENFORCER] Final structure preview:', structured.substring(0, 300));
   
   return structured;
+}
+
+// Helper function to enforce exactly 5 paragraphs structure
+function enforceFiveParagraphStructure(coverLetter) {
+  if (!coverLetter) return coverLetter;
+  
+  // Split into paragraphs (double line breaks indicate paragraph breaks)
+  const paragraphs = coverLetter.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+  
+  // Find where the actual body starts (after contact info, date, greeting)
+  let bodyStartIndex = 0;
+  for (let i = 0; i < paragraphs.length; i++) {
+    if (paragraphs[i].match(/I am writing to express my sincere interest/i)) {
+      bodyStartIndex = i;
+      break;
+    }
+  }
+  
+  // Extract header (contact info, date, greeting) and body
+  const header = paragraphs.slice(0, bodyStartIndex).join('\n\n');
+  const bodyParagraphs = paragraphs.slice(bodyStartIndex);
+  
+  // If we have more than 5 body paragraphs, merge some
+  // If we have fewer than 5, we can't fix it but log a warning
+  if (bodyParagraphs.length > 5) {
+    console.log('[PARAGRAPH ENFORCER] Found', bodyParagraphs.length, 'paragraphs, merging to 5...');
+    
+    // Try to intelligently merge paragraphs
+    // Keep opening and closing paragraphs separate
+    const opening = bodyParagraphs[0];
+    const closing = bodyParagraphs[bodyParagraphs.length - 1];
+    const middle = bodyParagraphs.slice(1, -1);
+    
+    // Merge middle paragraphs into 3 paragraphs
+    const middleText = middle.join(' ');
+    const sentences = middleText.match(/[^.!?]+[.!?]+/g) || [];
+    const sentencesPerParagraph = Math.ceil(sentences.length / 3);
+    
+    const mergedMiddle = [];
+    for (let i = 0; i < 3; i++) {
+      const start = i * sentencesPerParagraph;
+      const end = Math.min(start + sentencesPerParagraph, sentences.length);
+      mergedMiddle.push(sentences.slice(start, end).join(' ').trim());
+    }
+    
+    const finalBody = [opening, ...mergedMiddle, closing].filter(p => p.trim().length > 0);
+    
+    if (finalBody.length === 5) {
+      return header + (header ? '\n\n' : '') + finalBody.join('\n\n');
+    }
+  }
+  
+  // If we have exactly 5 or fewer, return as is
+  if (bodyParagraphs.length <= 5) {
+    return header + (header ? '\n\n' : '') + bodyParagraphs.join('\n\n');
+  }
+  
+  // Fallback: just return the original
+  return coverLetter;
 }
 
 // Helper function to create intelligent fallback cover letter

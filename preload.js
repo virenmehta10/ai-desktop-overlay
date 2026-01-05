@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Tabs / research helpers
   getCurrentTabs: () => ipcRenderer.invoke('GET_CURRENT_TABS'),
+  suggestTabGroups: (tabs) => ipcRenderer.invoke('SUGGEST_TAB_GROUPS', tabs),
+  createTabGroup: (browser, groupName, tabs) => ipcRenderer.invoke('CREATE_TAB_GROUP', browser, groupName, tabs),
   pasteToGoogleDoc: (outline) => ipcRenderer.invoke('PASTE_TO_GOOGLE_DOC', outline),
 
   // Email automation helpers

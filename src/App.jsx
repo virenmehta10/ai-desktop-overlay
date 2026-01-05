@@ -4,7 +4,7 @@ import SidebarAssistant from './components/SidebarAssistant';
 export default function App() {
   return (
     <div>
-      {/* AI Assistant Sidebar - Right Side Overlay */}
+      {/* Lucid Sidebar - Right Side Overlay */}
       <SidebarAssistant />
     </div>
   );

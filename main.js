@@ -1,88 +1,31 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
-const isDev = process.env.NODE_ENV !== 'production';
+const { pathToFileURL } = require('url');
+// Check if we're in development mode
+// In packaged apps, app.isPackaged will be true
+// In dev mode, we're running from source and app.isPackaged will be false
+const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 const browserService = require('./src/services/browser-service');
 const screenCaptureService = require('./src/services/screen-capture');
 const speechRecognitionService = require('./src/services/speech-recognition');
 
-let mainWindow;
+let mainWindow = null;
+let serverProcess = null;
+let ipcHandlersRegistered = false;
+let isCreatingWindow = false;
+let windowCreated = false;
+let activateHandlerRegistered = false;
+let appInitialized = false; // Prevent multiple initializations
 
-function createWindow() {
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workArea || primaryDisplay.bounds;
-
-  mainWindow = new BrowserWindow({
-    width,
-    height,
-    x: 0,
-    y: 0,
-    frame: false,
-    show: true,
-    transparent: true,
-    alwaysOnTop: true,
-    resizable: false,
-    movable: false,
-    backgroundColor: '#00000000',
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
-    }
-  });
-
-  mainWindow.setVisibleOnAllWorkspaces(true);
-  mainWindow.setAlwaysOnTop(true, 'floating');
-
-  mainWindow.loadURL(
-    isDev ? 'http://localhost:5174' : `file://${path.join(__dirname, '../dist/index.html')}`
-  );
-
-  // Make the window click-through by default so the OS apps are interactive
-  // We'll toggle this off when the cursor is over the sidebar
-  mainWindow.setIgnoreMouseEvents(true, { forward: true });
-
-  // Ensure the window stays at full-screen size and anchored
-  mainWindow.on('will-resize', (e) => e.preventDefault());
-  mainWindow.on('moved', () => {
-    mainWindow.setBounds({ x: 0, y: 0, width, height });
-  });
-
-  // Keep window visible and focused
-  mainWindow.on('blur', () => {
-    if (mainWindow.isVisible()) {
-      mainWindow.moveTop();
-    }
-  });
-
-  mainWindow.on('hide', () => {
-    console.log('Window hide event detected');
-  });
-
-  // Start screen capture when window is created
-  screenCaptureService.startCapturing();
-
-  // Prewarm microphone selection for faster speech recognition
-  speechRecognitionService.prewarmMicrophoneSelection().catch(error => {
-    console.error('Failed to prewarm microphone selection:', error);
-  });
-
-  // Removed Command+/ toggle per UX request
-
-  // Clear prompt and output with Command+C
-  globalShortcut.register('CommandOrControl+C', () => {
-    if (mainWindow.isVisible()) {
-      mainWindow.webContents.send('clear-prompt');
-    }
-  });
-
-  // Quit with Command+Q
-  globalShortcut.register('CommandOrControl+Q', () => {
-    app.quit();
-  });
-
+// Register all IPC handlers once
+function registerIpcHandlers() {
+  if (ipcHandlersRegistered) {
+    return; // Already registered
+  }
+  
   // Handle screen capture
   ipcMain.handle('CAPTURE_SCREEN', async () => {
     return screenCaptureService.getLastCapture();
@@ -91,7 +34,9 @@ function createWindow() {
   // Toggle click-through from renderer
   ipcMain.on('SET_CLICK_THROUGH', (_event, ignore) => {
     try {
-      mainWindow.setIgnoreMouseEvents(!!ignore, { forward: true });
+      if (mainWindow) {
+        mainWindow.setIgnoreMouseEvents(!!ignore, { forward: true });
+      }
     } catch (e) {
       console.error('Failed to set click-through:', e);
     }
@@ -117,6 +62,30 @@ function createWindow() {
     } catch (error) {
       console.error('Error getting tabs:', error);
       return [];
+    }
+  });
+
+  // Handle suggesting tab groups
+  ipcMain.handle('SUGGEST_TAB_GROUPS', async (event, tabs) => {
+    try {
+      const browserService = require('./src/services/browser-service');
+      const groups = await browserService.suggestTabGroups(tabs);
+      return groups;
+    } catch (error) {
+      console.error('Error suggesting tab groups:', error);
+      throw error;
+    }
+  });
+
+  // Handle creating tab groups
+  ipcMain.handle('CREATE_TAB_GROUP', async (event, browser, groupName, tabs) => {
+    try {
+      const browserService = require('./src/services/browser-service');
+      await browserService.createTabGroup(browser, groupName, tabs);
+      return { success: true };
+    } catch (error) {
+      console.error('Error creating tab group:', error);
+      throw error;
     }
   });
 
@@ -191,385 +160,145 @@ function createWindow() {
               set cy to wy + (wh / 2)
               -- click into the canvas to ensure caret is in editor
               click at {cx, cy}
-              delay 0.06
-              click at {cx, cy + 60}
-              delay 0.06
-              click at {cx, cy + 120}
-              delay 0.08
-            on error
-              click at {800, 500}
-              delay 0.1
+              delay 0.2
+              -- paste via Cmd+V
+              keystroke "v" using {command down}
             end try
-            -- nudge and paste
-            keystroke space
-            key code 51
-            delay 0.06
-            keystroke "v" using command down
-            delay 0.3
-            -- single paste only to avoid duplication
           end tell
         end tell
       `;
       
-      await new Promise((resolve, reject) => {
-        exec(`osascript -e '${focusAndPasteScript}'`, (error) => {
-          if (error) {
-            console.error('AppleScript focus/paste error:', error);
-            reject(new Error(`Failed to focus Chrome and paste: ${error.message}`));
-            return;
-          }
-          console.log('Chrome focused and content pasted successfully');
-          resolve();
-        });
+      exec(`osascript -e '${focusAndPasteScript}'`, (error, stdout, stderr) => {
+        if (error) {
+          console.error('Failed to paste to Google Docs:', error);
+          console.error('stderr:', stderr);
+        } else {
+          console.log('Successfully pasted to Google Docs');
+        }
       });
       
-      // Clean up temporary file
+      // Clean up temp file
       try {
         fs.unlinkSync(tempFile);
-        console.log('Temporary file cleaned up');
-      } catch (cleanupError) {
-        console.warn('Failed to clean up temporary file:', cleanupError);
+      } catch (e) {
+        // Ignore cleanup errors
       }
       
-      return { success: true, message: 'Research outline successfully pasted into Google Docs' };
-      
+      return { success: true };
     } catch (error) {
-      console.error('Failed to paste to Google Docs:', error);
+      console.error('Error pasting to Google Docs:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // Handle email response operations
+  // Handle detecting email thread
   ipcMain.handle('DETECT_EMAIL_THREAD', async () => {
     try {
-      console.log('Detecting email thread in current tab...');
-      
-      // Get current Chrome tab info
-      const browserService = require('./src/services/browser-service');
-      const tabs = await browserService.getCurrentTabs();
-      
-      if (!tabs || tabs.length === 0) {
-        return { success: false, error: 'No browser tabs found' };
-      }
-      
-      // Find the active tab (usually the first one)
-      const activeTab = tabs[0];
-      
-      // Check if it's an email service
-      const isEmailService = activeTab.url.includes('mail.google.com') || 
-                           activeTab.url.includes('outlook.com') ||
-                           activeTab.url.includes('mail.yahoo.com') ||
-                           activeTab.url.includes('protonmail.com');
-      
-      if (!isEmailService) {
-        return { success: false, error: 'Current tab is not an email service' };
-      }
-      
-      return { 
-        success: true, 
-        emailService: activeTab.url.includes('mail.google.com') ? 'gmail' : 
-                     activeTab.url.includes('outlook.com') ? 'outlook' : 'other',
-        tabInfo: activeTab
-      };
-      
+      const emailService = require('./src/services/email-service');
+      const thread = await emailService.detectEmailThread();
+      return { success: true, thread };
     } catch (error) {
       console.error('Failed to detect email thread:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // Generic automation functions
+  // Handle mouse movement
   ipcMain.handle('MOVE_MOUSE_TO', async (event, { x, y }) => {
     try {
-      console.log(`Moving mouse to coordinates: ${x}, ${y}`);
-      
-      const moveScript = `
-        tell application "System Events"
-          set mouseLocation to {${x}, ${y}}
-          set cursor position to mouseLocation
-        end tell
-      `;
-      
-      await new Promise((resolve, reject) => {
-        exec(`osascript -e '${moveScript}'`, (error) => {
+      const { exec } = require('child_process');
+      return new Promise((resolve, reject) => {
+        exec(`osascript -e 'tell application "System Events" to set position of mouse to {${x}, ${y}}'`, (error) => {
           if (error) {
-            console.error('Mouse move failed:', error);
-            reject(new Error(`Failed to move mouse: ${error.message}`));
-            return;
+            reject(error);
+          } else {
+            resolve({ success: true });
           }
-          console.log('Mouse moved successfully');
-          resolve();
         });
       });
-      
-      return { success: true, message: `Mouse moved to ${x}, ${y}` };
-      
     } catch (error) {
       console.error('Failed to move mouse:', error);
-      return { success: false, error: error.message };
+      throw error;
     }
   });
 
+  // Handle clicking at coordinates
   ipcMain.handle('CLICK_AT', async (event, { x, y }) => {
     try {
-      console.log(`Clicking at coordinates: ${x}, ${y}`);
-      
-      const clickScript = `
-        tell application "System Events"
-          set mouseLocation to {${x}, ${y}}
-          set cursor position to mouseLocation
-          delay 0.1
-          click at mouseLocation
-        end tell
-      `;
-      
-      await new Promise((resolve, reject) => {
-        exec(`osascript -e '${clickScript}'`, (error) => {
+      const { exec } = require('child_process');
+      return new Promise((resolve, reject) => {
+        exec(`osascript -e 'tell application "System Events" to click at {${x}, ${y}}'`, (error) => {
           if (error) {
-            console.error('Click failed:', error);
-            reject(new Error(`Failed to click: ${error.message}`));
-            return;
+            reject(error);
+          } else {
+            resolve({ success: true });
           }
-          console.log('Click successful');
-          resolve();
         });
       });
-      
-      return { success: true, message: `Clicked at ${x}, ${y}` };
-      
     } catch (error) {
       console.error('Failed to click:', error);
-      return { success: false, error: error.message };
+      throw error;
     }
   });
 
+  // Handle typing text
   ipcMain.handle('TYPE_TEXT', async (event, { text }) => {
     try {
-      console.log(`Typing text: ${text}`);
-      
-      const typeScript = `
-        tell application "System Events"
-          keystroke "${text.replace(/"/g, '\\"')}"
-        end tell
-      `;
-      
-      await new Promise((resolve, reject) => {
-        exec(`osascript -e '${typeScript}'`, (error) => {
+      const { exec } = require('child_process');
+      // Escape special characters for AppleScript
+      const escapedText = text.replace(/"/g, '\\"').replace(/\\/g, '\\\\');
+      return new Promise((resolve, reject) => {
+        exec(`osascript -e 'tell application "System Events" to keystroke "${escapedText}"'`, (error) => {
           if (error) {
-            console.error('Text typing failed:', error);
-            reject(new Error(`Failed to type text: ${error.message}`));
-            return;
+            reject(error);
+          } else {
+            resolve({ success: true });
           }
-          console.log('Text typed successfully');
-          resolve();
         });
       });
-      
-      return { success: true, message: `Typed: ${text}` };
-      
     } catch (error) {
       console.error('Failed to type text:', error);
-      return { success: false, error: error.message };
+      throw error;
     }
   });
 
+  // Handle pasting from clipboard
   ipcMain.handle('PASTE_FROM_CLIPBOARD', async (event) => {
     try {
-      console.log('Pasting from clipboard');
-      
-      const pasteScript = `
-        tell application "System Events"
-          keystroke "v" using command down
-        end tell
-      `;
-      
-      await new Promise((resolve, reject) => {
-        exec(`osascript -e '${pasteScript}'`, (error) => {
+      const { exec } = require('child_process');
+      return new Promise((resolve, reject) => {
+        exec(`osascript -e 'tell application "System Events" to keystroke "v" using command down'`, (error) => {
           if (error) {
-            console.error('Paste failed:', error);
-            reject(new Error(`Failed to paste: ${error.message}`));
-            return;
+            reject(error);
+          } else {
+            resolve({ success: true });
           }
-          console.log('Paste successful');
-          resolve();
         });
       });
-      
-      return { success: true, message: 'Pasted from clipboard' };
-      
     } catch (error) {
-      console.error('Failed to paste:', error);
-      return { success: false, error: error.message };
+      console.error('Failed to paste from clipboard:', error);
+      throw error;
     }
   });
 
+  // Handle generating email response
   ipcMain.handle('GENERATE_EMAIL_RESPONSE', async (event, { emailContent, context, tone }) => {
     try {
-      console.log('Generating email response...');
-      
-      // This will be handled by the AI service, so we just return success
-      // The actual generation happens in the server.js
-      return { success: true, message: 'Email response generation initiated' };
-      
+      const emailService = require('./src/services/email-service');
+      const response = await emailService.generateResponse(emailContent, context, tone);
+      return { success: true, response };
     } catch (error) {
-      console.error('Failed to initiate email response generation:', error);
+      console.error('Failed to generate email response:', error);
       return { success: false, error: error.message };
     }
   });
 
+  // Handle automating email reply
   ipcMain.handle('AUTOMATE_EMAIL_REPLY', async (event, { emailService, responseText }) => {
     try {
-      console.log(`Automating email reply for ${emailService}...`);
-      
-      // Copy response to clipboard
-      await new Promise((resolve, reject) => {
-        exec(`echo "${responseText.replace(/"/g, '\\"')}" | pbcopy`, (error) => {
-          if (error) {
-            console.error('Failed to copy to clipboard:', error);
-            reject(new Error(`Failed to copy to clipboard: ${error.message}`));
-            return;
-          }
-          console.log('Email response copied to clipboard successfully');
-          resolve();
-        });
-      });
-      
-      // Wait for clipboard to be populated
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      let automationScript = '';
-      
-      if (emailService === 'gmail') {
-        // Gmail automation: click reply button and paste
-        automationScript = `
-          tell application "Google Chrome"
-            activate
-            delay 0.5
-          end tell
-          
-          tell application "System Events"
-            delay 0.5
-            -- Try multiple approaches to click reply
-            -- First try keyboard shortcut 'r' for reply
-            keystroke "r"
-            delay 1.5
-            -- Wait for reply field to open and focus
-            delay 1
-            -- Paste the response
-            keystroke "v" using command down
-            delay 0.5
-          end tell
-        `;
-      } else if (emailService === 'outlook') {
-        // Outlook automation: click reply button and paste
-        automationScript = `
-          tell application "Google Chrome"
-            activate
-            delay 0.5
-          end tell
-          
-          tell application "System Events"
-            delay 0.5
-            -- Try keyboard shortcut 'r' for reply
-            keystroke "r"
-            delay 1.5
-            -- Wait for reply field to open
-            delay 1
-            -- Paste the response
-            keystroke "v" using command down
-            delay 0.5
-          end tell
-        `;
-      } else {
-        // Generic email service automation
-        automationScript = `
-          tell application "Google Chrome"
-            activate
-            delay 0.5
-          end tell
-          
-          tell application "System Events"
-            delay 0.5
-            -- Try common reply shortcuts
-            keystroke "r"
-            delay 1.5
-            -- Wait for reply field to open
-            delay 1
-            -- Paste the response
-            keystroke "v" using command down
-            delay 0.5
-          end tell
-        `;
-      }
-      
-      // Execute the automation script
-      let automationSuccess = false;
-      try {
-        await new Promise((resolve, reject) => {
-          exec(`osascript -e '${automationScript}'`, (error) => {
-            if (error) {
-              console.error('AppleScript automation error:', error);
-              reject(new Error(`Failed to automate email reply: ${error.message}`));
-              return;
-            }
-            console.log('Email reply automation completed successfully');
-            automationSuccess = true;
-            resolve();
-          });
-        });
-      } catch (error) {
-        console.log('Primary automation failed, trying fallback method...');
-        
-        // Fallback: try to find and click reply button by coordinates
-        const fallbackScript = `
-          tell application "Google Chrome"
-            activate
-            delay 0.5
-          end tell
-          
-          tell application "System Events"
-            delay 0.5
-            -- Try to click common reply button locations
-            -- Gmail reply button is usually in the bottom area
-            -- Click around where reply buttons typically are
-            tell process "Google Chrome"
-              -- Try clicking in the bottom area where reply buttons usually are
-              click at {100, 800}
-              delay 1
-              -- Try another common location
-              click at {200, 800}
-              delay 1
-              -- Paste the response
-              keystroke "v" using command down
-              delay 0.5
-            end tell
-          end tell
-        `;
-        
-        try {
-          await new Promise((resolve, reject) => {
-            exec(`osascript -e '${fallbackScript}'`, (error) => {
-              if (error) {
-                console.error('Fallback automation also failed:', error);
-                reject(new Error(`Both automation methods failed: ${error.message}`));
-                return;
-              }
-              console.log('Fallback automation completed successfully');
-              automationSuccess = true;
-              resolve();
-            });
-          });
-        } catch (fallbackError) {
-          console.error('All automation methods failed:', fallbackError);
-          throw fallbackError;
-        }
-      }
-      
-      return { 
-        success: true, 
-        message: `Email response automatically pasted into ${emailService} reply field! Review and edit before sending.` 
-      };
-      
+      const emailAutomationService = require('./src/services/email-automation-service');
+      const result = await emailAutomationService.automateReply(emailService, responseText);
+      return { success: true, result };
     } catch (error) {
       console.error('Failed to automate email reply:', error);
       return { success: false, error: error.message };
@@ -577,34 +306,51 @@ function createWindow() {
   });
 
   // Handle one-time screen capture
+  // Use Electron's desktopCapturer - the overlay is transparent so content behind is visible
   ipcMain.handle('CAPTURE_SCREEN_ONCE', async () => {
-    if (!mainWindow.isVisible()) {
-      mainWindow.show();
-      mainWindow.moveTop();
-      mainWindow.focus();
+    try {
+      console.log('CAPTURE_SCREEN_ONCE: Starting screen capture...');
+      
+      // Use Electron's desktopCapturer to capture the screen
+      // The overlay window is transparent, so content behind it will be visible
+      const result = await screenCaptureService.captureOnce(false);
+      
+      console.log('CAPTURE_SCREEN_ONCE result:', {
+        hasError: !!result.error,
+        hasDataURL: !!result.dataURL,
+        timestamp: result.timestamp,
+        uniqueId: result.uniqueId,
+        dataURLLength: result.dataURL?.length || 0
+      });
+      
+      return result;
+    } catch (error) {
+      console.error('Screen capture error:', error);
+      return { error: error.message };
     }
-    const result = await screenCaptureService.captureOnce(false);
-    console.log('CAPTURE_SCREEN_ONCE result:', {
-      hasError: !!result.error,
-      hasDataURL: !!result.dataURL,
-      timestamp: result.timestamp,
-      uniqueId: result.uniqueId,
-      allProperties: Object.keys(result || {})
-    });
-    return result;
   });
 
   ipcMain.handle('FORCE_REFRESH_CAPTURE', async () => {
-    return screenCaptureService.captureOnce(true);
+    // Use Electron's desktopCapturer for consistency
+    try {
+      console.log('FORCE_REFRESH_CAPTURE: Starting screen capture...');
+      const result = await screenCaptureService.captureOnce(true);
+      return result;
+    } catch (error) {
+      console.error('Force refresh capture error:', error);
+      return { error: error.message };
+    }
   });
 
   ipcMain.handle('SET_WINDOW_VISIBILITY', async (_e, shouldShow) => {
-    if (shouldShow) {
-      mainWindow.show();
-      mainWindow.moveTop();
-      mainWindow.focus();
-    } else {
-      mainWindow.hide();
+    if (mainWindow) {
+      if (shouldShow) {
+        mainWindow.show();
+        mainWindow.moveTop();
+        mainWindow.focus();
+      } else {
+        mainWindow.hide();
+      }
     }
   });
 
@@ -668,16 +414,328 @@ function createWindow() {
       return { success: false, error: error.message };
     }
   });
+
+  ipcHandlersRegistered = true;
 }
 
-app.whenReady().then(() => {
-  createWindow();
+function createWindow() {
+  // Prevent multiple window creations
+  if (isCreatingWindow) {
+    console.log('Window creation already in progress, skipping...');
+    return;
+  }
+  
+  // If window already exists and is valid, just show it
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    console.log('Window already exists, showing it...');
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  
+  // If we've already created a window once, don't create another
+  if (windowCreated && !mainWindow) {
+    console.log('Window was created before but no longer exists. Not recreating to prevent loop.');
+    return;
+  }
+  
+  isCreatingWindow = true;
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workArea || primaryDisplay.bounds;
 
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  mainWindow = new BrowserWindow({
+    width,
+    height,
+    x: 0,
+    y: 0,
+    frame: false,
+    show: true,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    movable: false,
+    backgroundColor: '#00000000',
+    hasShadow: false, // No shadow for true transparency
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
   });
+
+  // Set click-through IMMEDIATELY after window creation
+  // This makes the overlay transparent to mouse events by default
+  mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  
+  mainWindow.setVisibleOnAllWorkspaces(true);
+  mainWindow.setAlwaysOnTop(true, 'floating');
+
+  // In production, we need to load from the app's Resources directory
+  // In packaged apps, __dirname points to app/Contents/Resources/app/
+  // The build folder should be in app/Contents/Resources/app/build/
+  let distPath;
+  if (isDev) {
+    distPath = 'http://localhost:5174';
+  } else {
+    // Production mode - load from file system
+    // Try multiple locations in order of likelihood
+    const possiblePaths = [
+      // Primary location: build folder in app directory (vite output)
+      path.join(__dirname, 'build', 'index.html'),
+      // Fallback: using app.getAppPath() which is more reliable in packaged apps
+      path.join(app.getAppPath(), 'build', 'index.html'),
+      // macOS packaged app location
+      path.join(process.resourcesPath || __dirname, 'app', 'build', 'index.html'),
+      // Legacy locations (dist folder)
+      path.join(__dirname, 'dist', 'index.html'),
+      path.join(app.getAppPath(), 'dist', 'index.html'),
+      // Last resort: index.html in root
+      path.join(__dirname, 'index.html'),
+      path.join(app.getAppPath(), 'index.html'),
+    ];
+    
+    let foundPath = null;
+    console.log('🔍 Production mode - searching for index.html...');
+    console.log('__dirname:', __dirname);
+    console.log('app.getAppPath():', app.getAppPath());
+    console.log('process.resourcesPath:', process.resourcesPath);
+    
+    for (const testPath of possiblePaths) {
+      if (fs.existsSync(testPath)) {
+        foundPath = testPath;
+        console.log('✅ Found index.html at:', testPath);
+        break;
+      }
+    }
+    
+    if (foundPath) {
+      // Use pathToFileURL for proper file:// URL formatting
+      distPath = pathToFileURL(foundPath).href;
+      console.log('✅ Loading from:', distPath);
+    } else {
+      console.error('❌ Could not find index.html in any location');
+      console.error('Searched paths:');
+      possiblePaths.forEach(p => console.error('  -', p));
+      try {
+        console.error('Files in __dirname:', fs.readdirSync(__dirname).join(', '));
+        if (app.getAppPath() !== __dirname) {
+          console.error('Files in app.getAppPath():', fs.readdirSync(app.getAppPath()).join(', '));
+        }
+      } catch (e) {
+        console.error('Could not read directories:', e.message);
+      }
+      // Still try to load from primary location, even if it doesn't exist (will show error)
+      distPath = pathToFileURL(path.join(__dirname, 'dist', 'index.html')).href;
+    }
+  }
+  
+  // Load the URL and ensure window is visible
+  mainWindow.loadURL(distPath).then(() => {
+    console.log('✅ Successfully loaded URL:', distPath);
+    // Force window to be visible
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.moveTop();
+    
+    // Make the window click-through AFTER content loads so the OS apps are interactive
+    // We'll toggle this off when the cursor is over the sidebar
+    console.log('✅ Setting click-through mode');
+    mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  }).catch(err => {
+    console.error('❌ Failed to load URL:', err);
+    console.error('Path attempted:', distPath);
+    // Show error but keep window visible
+    mainWindow.loadURL(`data:text/html,<h1>Error loading app</h1><p>${err.message}</p><p>Path: ${distPath}</p><p>__dirname: ${__dirname}</p>`).then(() => {
+      mainWindow.show();
+      mainWindow.focus();
+      // Still enable click-through even on error
+      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    });
+  });
+  
+  // Mark window as created and reset the flag
+  windowCreated = true;
+  isCreatingWindow = false;
+  
+  // Force window to be visible immediately
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.moveTop();
+  
+  // Prevent window from being closed - this is a persistent overlay
+  mainWindow.on('close', (event) => {
+    console.log('Window close attempted - preventing to maintain overlay');
+    event.preventDefault();
+    mainWindow.hide();
+  });
+  
+  // Handle window destruction
+  mainWindow.on('closed', () => {
+    console.log('Window was closed');
+    mainWindow = null;
+  });
+
+  // Ensure the window stays at full-screen size and anchored
+  mainWindow.on('will-resize', (e) => e.preventDefault());
+  mainWindow.on('moved', () => {
+    mainWindow.setBounds({ x: 0, y: 0, width, height });
+  });
+
+  // Keep window visible and focused
+  mainWindow.on('blur', () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.moveTop();
+    }
+  });
+
+  mainWindow.on('hide', () => {
+    console.log('Window hide event detected');
+  });
+
+  // Start screen capture when window is created
+  screenCaptureService.startCapturing();
+
+  // Prewarm microphone selection for faster speech recognition
+  speechRecognitionService.prewarmMicrophoneSelection().catch(error => {
+    console.error('Failed to prewarm microphone selection:', error);
+  });
+
+  // Removed Command+/ toggle per UX request
+
+  // Clear prompt and output with Command+E
+  globalShortcut.register('CommandOrControl+E', () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.webContents.send('clear-prompt');
+    }
+  });
+
+  // Quit with Command+Q
+  globalShortcut.register('CommandOrControl+Q', () => {
+    app.quit();
+  });
+}
+
+// Start the backend server in production
+function startServer() {
+  if (isDev) {
+    console.log('Development mode: server should be started separately');
+    return;
+  }
+
+  console.log('Starting backend server...');
+  const serverPath = path.join(__dirname, 'server.js');
+  console.log('Server path:', serverPath);
+  
+  // Start server as a child process
+  serverProcess = spawn(process.execPath, [serverPath], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: '3000'
+    },
+    stdio: 'inherit'
+  });
+
+  serverProcess.on('error', (error) => {
+    console.error('Failed to start server:', error);
+  });
+
+  serverProcess.on('exit', (code) => {
+    console.log(`Server process exited with code ${code}`);
+  });
+
+  // Give server a moment to start
+  setTimeout(() => {
+    console.log('Server should be running on port 3000');
+  }, 2000);
+}
+
+// Track if app is ready to prevent multiple initializations
+let appReady = false;
+let initializationStarted = false;
+
+// Prevent multiple app initializations using Electron's built-in single instance lock
+// This MUST be called before any other app initialization
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // Another instance is already running, quit this one IMMEDIATELY
+  console.log('❌ Another instance is already running, quitting immediately...');
+  app.quit();
+  process.exit(0);
+}
+
+// Register second-instance handler BEFORE whenReady to catch any duplicate launches
+app.on('second-instance', () => {
+  console.log('⚠️ Second instance detected - focusing existing window instead');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.moveTop();
+  } else {
+    console.log('⚠️ Main window not available, ignoring second instance');
+  }
+  // DO NOT create a new window or initialize anything
+});
+
+// This is the first (and only) instance
+app.whenReady().then(() => {
+  // Multiple guards to prevent ANY possibility of duplicate initialization
+  if (appReady || initializationStarted) {
+    console.log('🚫 BLOCKED: App already initialized, preventing duplicate');
+    return;
+  }
+  
+  initializationStarted = true;
+  appReady = true;
+  
+  console.log('✅ App is ready, initializing ONCE...');
+  
+  // Register IPC handlers once before creating window
+  registerIpcHandlers();
+  
+  // Start server first in production
+  if (!isDev) {
+    startServer();
+  }
+  
+  // Wait a bit for server to start, then create window ONCE
+  // Multiple guards to prevent any possibility of multiple creations
+  if (!windowCreated && !isCreatingWindow && mainWindow === null) {
+    setTimeout(() => {
+      // Final triple-check before creating
+      if (!windowCreated && !isCreatingWindow && mainWindow === null && appReady) {
+        console.log('✅ Creating window (single time only)...');
+        createWindow();
+      } else {
+        console.log('🚫 BLOCKED: Window already exists or creation in progress');
+      }
+    }, isDev ? 0 : 3000);
+  } else {
+    console.log('🚫 BLOCKED: Window creation prevented - already exists or in progress');
+  }
 });
 
 app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
+  console.log('All windows closed event');
+  // On macOS, don't quit when all windows are closed - keep app running
+  // This is normal macOS behavior for apps that should stay in the dock
+  // Kill server process when app closes
+  if (serverProcess) {
+    serverProcess.kill();
+  }
+  // Only quit on non-macOS platforms
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+  // On macOS, the app stays running and can be reactivated via dock icon
+});
+
+app.on('before-quit', () => {
+  // Clean up server process
+  if (serverProcess) {
+    serverProcess.kill();
+  }
 });

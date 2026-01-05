@@ -72,6 +72,18 @@ export default function SidebarAssistant() {
     scrollToBottom();
   }, [conversationHistory]);
 
+  // Copy to clipboard handler
+  const [copiedId, setCopiedId] = useState(null);
+  const handleCopy = async (text, id) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
+  };
+
 
 
   const clearAll = () => {
@@ -909,7 +921,7 @@ The implementation roadmap for advancing ${topic} research should include specif
       const formData = new FormData();
       formData.append('audio', audioBlob);
       
-      const response = await fetch('http://localhost:3001/transcribe', {
+      const response = await fetch('http://localhost:3000/transcribe', {
         method: 'POST',
         body: formData
       });
@@ -961,7 +973,7 @@ The implementation roadmap for advancing ${topic} research should include specif
       const formData = new FormData();
       formData.append('resume', file);
       
-      const response = await fetch('http://localhost:3001/api/internship/upload-resume', {
+      const response = await fetch('http://localhost:3000/api/internship/upload-resume', {
         method: 'POST',
         body: formData,
       });
@@ -1001,11 +1013,13 @@ The implementation roadmap for advancing ${topic} research should include specif
       return;
     }
     
-    // Check if this is an email response request - improved detection
-    const emailResponsePattern = /(?:respond to|reply to|answer|draft.*response.*for) (?:this|the) (?:email|message|thread)|(?:write|create|generate) (?:a )?(?:response|reply|email) (?:to|for) (?:this|the) (?:email|message|thread)|(?:help me )?(?:respond|reply|answer) (?:to|for) (?:this|the) (?:email|message|thread)|email|reply|respond/i;
-    const emailResponseMatch = userQuery.match(emailResponsePattern);
+    // Check if this is an EXPLICIT email response automation request
+    // Only trigger for very specific phrases like "respond to this email" or "draft email response"
+    // NOT for generic queries that mention email, respond, reply, message, etc.
+    const emailAutomationPattern = /^(?:respond to|reply to|answer|draft (?:a )?response (?:to|for)) (?:this|the|my) (?:email|thread)$/i;
+    const emailAutomationMatch = userQuery.trim().match(emailAutomationPattern);
     
-    if (emailResponseMatch) {
+    if (emailAutomationMatch) {
       // Check if we have an email tab attached
       const hasEmailTab = contextTabs.some(tab => 
         tab.url.includes('mail.google.com') || 
@@ -1038,6 +1052,85 @@ The implementation roadmap for advancing ${topic} research should include specif
       // Since the AI is screen-aware, it can see the Google Form directly
       // No need to check for tab context - just proceed with automation
       await executeGoogleFormsWorkflow(userQuery);
+      return;
+    }
+    
+    // Check for tab grouping command FIRST, before any other processing
+    if (userQuery.toLowerCase().includes('group') && userQuery.toLowerCase().includes('tab')) {
+      setIsLoading(true);
+      setError(null);
+      setQuery('');
+      
+      const userMessage = {
+        id: Date.now(),
+        type: 'user',
+        content: userQuery,
+      };
+      setConversationHistory(prev => [...prev, userMessage]);
+      
+      try {
+        // Get current tabs
+        const tabs = await window.electron.getCurrentTabs();
+        
+        if (!tabs || tabs.length === 0) {
+          const errorMessage = {
+            id: Date.now() + 1,
+            type: 'error',
+            content: 'No tabs found. Please open some tabs in Chrome first.',
+          };
+          setConversationHistory(prev => [...prev, errorMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        const progressMessage = {
+          id: Date.now() + 1,
+          type: 'ai',
+          content: `Analyzing ${tabs.length} tabs and organizing them into categories...`,
+        };
+        setConversationHistory(prev => [...prev, progressMessage]);
+        
+        // Get suggested groups using AI categorization
+        const groups = await window.electron.suggestTabGroups(tabs);
+        
+        if (!groups || Object.keys(groups).length === 0) {
+          const errorMessage = {
+            id: Date.now() + 2,
+            type: 'error',
+            content: 'Could not categorize tabs. Please try again.',
+          };
+          setConversationHistory(prev => [...prev, errorMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Create each group
+        let groupsCreated = 0;
+        for (const [groupName, groupTabs] of Object.entries(groups)) {
+          if (groupTabs && groupTabs.length > 0) {
+            await window.electron.createTabGroup('Google Chrome', groupName, groupTabs);
+            groupsCreated++;
+          }
+        }
+        
+        const groupNames = Object.keys(groups).join(', ');
+        const successMessage = {
+          id: Date.now() + 2,
+          type: 'ai',
+          content: `✓ Successfully organized your tabs into ${groupsCreated} categories: ${groupNames}. Check your Chrome window to see the organized groups!`,
+        };
+        setConversationHistory(prev => [...prev, successMessage]);
+      } catch (error) {
+        console.error('Tab grouping error:', error);
+        const errorMessage = {
+          id: Date.now() + 2,
+          type: 'error',
+          content: 'Failed to group tabs: ' + error.message,
+        };
+        setConversationHistory(prev => [...prev, errorMessage]);
+      } finally {
+        setIsLoading(false);
+      }
       return;
     }
     
@@ -1130,13 +1223,13 @@ The implementation roadmap for advancing ${topic} research should include specif
       console.log('Has Google Doc open:', hasGoogleDocOpen);
       console.log('Query was modified:', finalQuery !== userQuery);
 
-      const learningTemplate = `You are in Active Learning Mode. Based on the user's screen content and query, respond concisely using EXACTLY these sections (no extra preface or epilogue). Use small section headings:
+      const learningTemplate = `You are in Active Learning Mode. Be the user's most supportive teacher ever—patient, enthusiastic, and determined to make the concept click. Based on the user's screen content and query, respond using EXACTLY these sections (no preface or epilogue). Keep the tone warm, encouraging, and pedagogy-focused.
 
 ### Brief summary
 3-4 sentences that capture the core idea, key definition, and why it matters.
 
-### Explain like I'm 8
-Two short paragraphs (each 2–3 sentences) in simple language that build intuition step-by-step. The first should set the idea, the second should reinforce it with a tiny, friendly scenario.
+### Explain like I'm 5
+Two short paragraphs (each 2–3 sentences) using playful, concrete language so even a child would grasp it. First paragraph introduces the idea gently; the second reinforces it with a vivid mini-story tying back to the user's situation.
 
 ### Helpful analogy
 One clear everyday analogy (1 short paragraph) that mirrors the structure of the idea.
@@ -1145,9 +1238,9 @@ One clear everyday analogy (1 short paragraph) that mirrors the structure of the
 2-3 concrete applications tied to what is on screen (one-liners are fine).
 
 ### Worked example
-One small example with numbered steps (keep math clean). Finish with the final answer or conclusion.
+One small example with numbered steps (keep math clean). Walk through each step like you're coaching them live. Finish with the final answer or conclusion plus an encouraging takeaway.
 
-Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.`;
+Keep each section compact but detailed enough to remove any confusion. Avoid fluff, stay friendly, and always tie explanations back to what the user asked.`;
 
       const finalEffectiveQuery = isActiveMode ? `${finalQuery}\n\n${learningTemplate}` : finalQuery;
 
@@ -1173,7 +1266,7 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
       });
       
       updateProgress('AI Processing', 'Sending request to AI and processing your query...');
-      const response = await fetch('http://localhost:3001/api/ai', {
+      const response = await fetch('http://localhost:3000/api/ai', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1311,6 +1404,7 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
           content: aiResponse,
         };
         setConversationHistory(prev => [...prev, aiMessage]);
+        // Keep response visible during streaming, will be hidden by display logic once in history
         setResponse(aiResponse);
       } else {
         console.log('Suppressing AI message for continuation flow');
@@ -1407,33 +1501,43 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
       {/* Collapsible Sidebar Panel - Right side, doesn't obstruct main content */}
       {isVisible && (
         <>
-            {/* Expanded state - ONLY when NOT collapsed */}
-            {!isCollapsed && (
+            {/* Expanded state - ONLY when NOT collapsed - completely removed when collapsed */}
+            {!isCollapsed ? (
               <motion.div 
                 key="expanded-sidebar"
-                className="fixed right-0 top-0 h-screen w-[360px] bg-white shadow-xl flex flex-col z-40 overflow-hidden"
-                style={{ zIndex: 2147483646 }}
-                onMouseEnter={() => window.electron?.setClickThrough(false)}
-                onMouseLeave={() => window.electron?.setClickThrough(true)}
-                initial={{ x: '100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '100%' }}
-                transition={{ type: 'spring', stiffness: 280, damping: 32 }}
-              >
+                className="fixed right-0 top-0 h-screen w-[340px] bg-white/65 backdrop-blur-md shadow-xl flex flex-col z-40 overflow-hidden"
+                style={{ 
+                  zIndex: 2147483646
+                }}
+                  onMouseEnter={() => window.electron?.setClickThrough(false)}
+                  onMouseLeave={() => window.electron?.setClickThrough(true)}
+                  initial={{ x: '100%', opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ 
+                    x: '100%', 
+                    opacity: 0,
+                    scale: 0.98,
+                    boxShadow: 'none',
+                    border: 'none',
+                    outline: 'none',
+                    transition: { duration: 0.01, ease: 'linear' }
+                  }}
+                  transition={{ type: 'spring', stiffness: 280, damping: 32 }}
+                >
                 {/* Header */}
-                <div className="px-6 py-4 bg-white">
+                <div className="px-6 py-4 bg-white/65 backdrop-blur-md border-b border-black">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       {/* Logo and Title */}
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center flex-shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center flex-shrink-0 border-2 border-blue-400">
                           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                           </svg>
                         </div>
                         <div>
                           <div className="text-sm font-bold text-gray-900 tracking-tight">
-                            AI Assistant
+                            Lucid
                           </div>
                           <div className="text-xs text-gray-500 font-medium">Screen-aware help</div>
                         </div>
@@ -1466,7 +1570,7 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                 </div>
 
                 {/* Conversation Area */}
-                <div className="flex-1 overflow-y-auto px-6 py-4 bg-white" style={{ pointerEvents: 'auto' }}>
+                <div className="flex-1 overflow-y-auto px-6 py-4 bg-white/65 backdrop-blur-md" style={{ pointerEvents: 'auto' }}>
                   {/* Tab Context Manager - Inline */}
                   {showTabContextManager && (
                     <TabContextManager
@@ -1483,7 +1587,7 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.5 }}
                     >
-                      <div className="w-16 h-16 mx-auto mb-4 bg-gray-200 rounded-2xl flex items-center justify-center border border-gray-300">
+                      <div className="w-16 h-16 mx-auto mb-4 bg-white rounded-2xl flex items-center justify-center border border-blue-200 shadow-sm">
                         <svg className="w-8 h-8 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
                             d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -1505,20 +1609,20 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                       >
                         {message.type === 'user' && (
                           <div className="w-full mb-4">
-                            <div className="w-full bg-gray-50 text-gray-900 px-4 py-3 rounded-lg text-[13px] leading-relaxed border border-gray-200 font-medium">
+                            <div className="w-full bg-gradient-to-br from-[#f7f7f8] to-[#f0f0f1] text-gray-900 px-4 py-3 rounded-xl text-[14px] leading-relaxed shadow-sm border border-gray-200/50 font-medium hover:shadow-md transition-shadow duration-200">
                               {message.content}
                             </div>
                           </div>
                         )}
 
-                                                {message.type === 'ai' && (
-                          <div className="w-full mb-4">
+                        {message.type === 'ai' && (
+                          <div className="w-full mb-4 group relative">
                             <div className="w-full text-gray-900 text-sm leading-relaxed ai-response-text">
                               <div 
-                                className="prose prose-sm max-w-none ai-response-text prose-ul:list-none prose-ol:list-none" 
+                                className="prose prose-sm max-w-none ai-response-text prose-ul:list-none prose-ol:list-none relative" 
                                 style={{ 
                                   color: 'black', 
-                                  backgroundColor: 'white',
+                                  backgroundColor: 'transparent',
                                   fontSize: '14px',
                                   lineHeight: '1.6',
                                   fontWeight: '400',
@@ -1535,6 +1639,29 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                                 >
                                   {preprocessMath(message.content)}
                                 </ReactMarkdown>
+                                <div className="flex justify-end mt-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                  <button
+                                    onClick={() => handleCopy(message.content, `ai-${message.id}`)}
+                                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 transition-colors"
+                                    title={copiedId === `ai-${message.id}` ? 'Copied!' : 'Copy'}
+                                  >
+                                    {copiedId === `ai-${message.id}` ? (
+                                      <>
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Copied
+                                      </>
+                                    ) : (
+                                      <>
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                        </svg>
+                                        Copy
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -1554,17 +1681,17 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                   {/* Show current response if it exists but hasn't been added to history yet */}
                   {response && !conversationHistory.some(msg => msg.type === 'ai' && msg.content === response) && (
                     <motion.div 
-                      className="w-full mb-4"
+                      className="w-full mb-4 group relative"
                       initial={{ opacity: 0, y: 15 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.25 }}
                     >
                       <div className="w-full text-gray-900 text-sm leading-relaxed ai-response-text">
                         <div 
-                          className="prose prose-sm max-w-none ai-response-text prose-ul:list-none prose-ol:list-none" 
+                          className="prose prose-sm max-w-none ai-response-text prose-ul:list-none prose-ol:list-none relative" 
                           style={{ 
                             color: 'black', 
-                            backgroundColor: 'white',
+                            backgroundColor: 'transparent',
                             fontSize: '14px',
                             lineHeight: '1.6',
                             fontWeight: '400',
@@ -1581,6 +1708,29 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                           >
                             {preprocessMath(response)}
                           </ReactMarkdown>
+                          <div className="flex justify-end mt-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                            <button
+                              onClick={() => handleCopy(response, 'current-response')}
+                              className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 transition-colors"
+                              title={copiedId === 'current-response' ? 'Copied!' : 'Copy'}
+                            >
+                              {copiedId === 'current-response' ? (
+                                <>
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                  Copied
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                  </svg>
+                                  Copy
+                                </>
+                              )}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </motion.div>
@@ -1608,14 +1758,14 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                 </div>
 
                 {/* Input Area */}
-                <div className="px-2 py-4 bg-white" style={{ pointerEvents: 'auto' }}>
+                <div className="px-2 py-4 bg-white/65 backdrop-blur-md" style={{ pointerEvents: 'auto' }}>
                   <div className="space-y-3">
                     {/* Action Buttons */}
                     <div className="flex gap-2.5">
                       <button
                         onClick={() => document.getElementById('resume-upload').click()}
                         disabled={isUploading}
-                        className="px-3 py-2 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-all duration-200 flex items-center gap-1.5 font-medium border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-3 py-2 text-xs bg-white hover:bg-gray-50 text-gray-800 rounded-lg transition-all duration-200 flex items-center gap-1.5 font-medium border border-blue-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isUploading ? (
                           <>
@@ -1642,12 +1792,12 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                       />
                       <button
                         onClick={toggleListening}
-                        className={`px-3 py-2 text-xs rounded-lg transition-all duration-200 flex items-center gap-1.5 font-medium border ${
+                        className={`px-3 py-2 text-xs rounded-lg transition-all duration-200 flex items-center gap-1.5 font-medium border shadow-sm ${
                           isListening
                             ? 'bg-red-500 text-white hover:bg-red-600 border-red-400'
                             : isTranscribing
                             ? 'bg-blue-500 text-white hover:bg-blue-600 border-blue-400'
-                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-200'
+                            : 'bg-white hover:bg-gray-50 text-gray-800 border-blue-200'
                         }`}
                         disabled={isTranscribing}
                       >
@@ -1840,14 +1990,7 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                     </form>
 
                     {/* Keyboard Shortcuts */}
-                    <div className="flex items-center justify-between text-xs text-gray-500">
-                      <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-1">
-                          <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-600 font-mono text-xs border border-gray-200">⌘</kbd>
-                          <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-600 font-mono text-xs border border-gray-200">/</kbd>
-                          <span className="ml-1">toggle</span>
-                        </span>
-                      </div>
+                    <div className="flex items-center justify-end text-xs text-gray-500">
                       <button
                         onClick={clearAll}
                         className="text-gray-400 hover:text-gray-600 transition-colors px-2 py-1 rounded-lg hover:bg-gray-100"
@@ -1857,22 +2000,28 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                     </div>
                   </div>
                 </div>
-              </motion.div>
-            )}
+                </motion.div>
+            ) : null}
 
             {/* Collapsed state - translucent rail */}
-            {isCollapsed && (
-              <div 
-                className="fixed right-0 top-0 h-screen w-12 z-40 cursor-pointer"
-                style={{ 
-                  zIndex: 2147483646,
-                  backgroundColor: 'rgba(255, 255, 255, 0.55)',
-                  backdropFilter: 'saturate(120%) blur(6px)'
-                }}
-                onMouseEnter={() => window.electron?.setClickThrough(false)}
-                onMouseLeave={() => window.electron?.setClickThrough(true)}
-                onClick={() => setIsCollapsed(false)}
-              >
+            <AnimatePresence>
+              {isCollapsed && (
+                <motion.div 
+                  className="fixed right-0 top-0 h-screen w-12 z-40 cursor-pointer"
+                  style={{ 
+                    zIndex: 2147483646,
+                    backgroundColor: 'rgba(255, 255, 255, 0.55)',
+                    backdropFilter: 'saturate(120%) blur(6px)',
+                    display: !isCollapsed ? 'none' : 'block'
+                  }}
+                  onMouseEnter={() => window.electron?.setClickThrough(false)}
+                  onMouseLeave={() => window.electron?.setClickThrough(true)}
+                  onClick={() => setIsCollapsed(false)}
+                  initial={{ x: '100%', opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: '100%', opacity: 0, transition: { duration: 0.05 } }}
+                  transition={{ type: 'spring', stiffness: 280, damping: 32 }}
+                >
                 <div className="flex flex-col items-center justify-between h-full py-3">
                   <div className="w-7 h-7 rounded-lg bg-gray-900 text-white flex items-center justify-center">
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1892,8 +2041,9 @@ Keep each section compact, but slightly more detailed than a tweet. Avoid fluff.
                     </svg>
                   </button>
                 </div>
-              </div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </>
         )}
 
